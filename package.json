@@ -1,0 +1,19 @@
+{
+  "name": "sokkaio",
+  "version": "1.0.0",
+  "description": "Juego de fútbol 4v4 online en tercera persona con Three.js y Socket.IO",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  },
+  "license": "MIT"
+}

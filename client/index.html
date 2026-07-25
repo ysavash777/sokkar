@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sokkaio — Fútbol 4v4 online</title>
+  <link rel="stylesheet" href="./css/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- Pantalla de entrada -->
+  <div id="join-screen">
+    <div class="join-card">
+      <h1>SOKKAIO</h1>
+      <p class="subtitle">Fútbol 4v4 online</p>
+      <form id="join-form">
+        <input id="nickname" type="text" maxlength="16" placeholder="Tu nickname" autocomplete="off" required />
+        <button type="submit">Jugar</button>
+      </form>
+      <p id="join-error" class="error"></p>
+      <div class="controls-help">
+        <span><b>WASD</b> mover</span>
+        <span><b>Shift</b> sprint</span>
+        <span><b>Espacio</b> salto</span>
+        <span><b>Clic izq</b> patear</span>
+        <span><b>Clic rueda</b> cruzar pie</span>
+        <span><b>Clic der</b> barrida</span>
+        <span><b>Mouse</b> cámara 360°</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="scoreboard">
+      <span class="team team-red" id="score-red">0</span>
+      <span class="sep">–</span>
+      <span class="team team-blue" id="score-blue">0</span>
+    </div>
+    <div id="stamina-wrap"><div id="stamina-bar"></div></div>
+    <div id="messages"></div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
