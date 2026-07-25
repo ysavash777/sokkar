@@ -44,6 +44,7 @@ const joinForm = document.getElementById('join-form');
 const joinError = document.getElementById('join-error');
 const nicknameInput = document.getElementById('nickname');
 const skinSelect = document.getElementById('skin-select');
+const positionSelect = document.getElementById('position-select');
 
 // Selector de skin: la lista sale de /api/skins (los .png en
 // client/assets/skins/, nombre de archivo = nombre de la skin).
@@ -73,7 +74,7 @@ joinForm.addEventListener('submit', (e) => {
   joinError.textContent = '';
   const skin = skinSelect.value || undefined;
   if (skin) localStorage.setItem(SKIN_STORAGE_KEY, skin);
-  net.join(nickname, skin);
+  net.join(nickname, skin, positionSelect.value);
 });
 
 net.on('joinError', (msg) => {

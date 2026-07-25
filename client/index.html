@@ -24,6 +24,10 @@
       <form id="join-form">
         <input id="nickname" type="text" maxlength="16" placeholder="Tu nickname" autocomplete="off" required />
         <select id="skin-select" title="Skin"></select>
+        <select id="position-select" title="Posición">
+          <option value="FIELD">Jugador de campo</option>
+          <option value="GK">Arquero</option>
+        </select>
         <button type="submit">Jugar</button>
       </form>
       <p id="join-error" class="error"></p>
@@ -35,6 +39,7 @@
         <span><b>Clic rueda</b> cruzar pie</span>
         <span><b>Clic der</b> barrida</span>
         <span><b>Mouse</b> cámara 360°</span>
+        <span><b>Clic rueda en el aire (arquero)</b> clavado lateral</span>
       </div>
     </div>
   </div>

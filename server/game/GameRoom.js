@@ -11,6 +11,7 @@ import {
   stepBall,
   collideBallWithArms,
   collideBallWithSlidingBody,
+  collideBallWithAirborneBody,
   checkGoalCrossing,
   clampToPitch,
   clampPlayerToPitch,
@@ -43,7 +44,7 @@ export class GameRoom {
 
   // ---------------------------------------------------------------- lobby
 
-  addPlayer(socket, nickname, skin) {
+  addPlayer(socket, nickname, skin, position) {
     if (this.players.has(socket.id)) return;
     if (this.players.size >= NET.MAX_PLAYERS) {
       socket.emit('joinError', 'La partida está llena (4v4).');
@@ -55,9 +56,10 @@ export class GameRoom {
       id: socket.id,
       nickname,
       skin: skin || 'steve',
+      position: position === 'GK' ? 'GK' : 'FIELD', // arquero: habilita el clavado lateral
       team,
       pos: { x: spawn.x, y: 0, z: spawn.z },
-      vel: { x: 0, z: 0 }, // velocidad real estimada (no visible al jugador), usada en física de barrida
+      vel: { x: 0, z: 0 }, // velocidad real estimada (no visible al jugador), usada en física de barrida/salto
       lastStateAt: 0,
       yaw: team === 0 ? Math.PI / 2 : -Math.PI / 2,
       anim: ANIM.IDLE,
@@ -75,6 +77,7 @@ export class GameRoom {
     socket.emit('joined', {
       id: socket.id,
       team,
+      position: player.position,
       spawn,
       score: this.score,
       players: this.publicPlayers(),
@@ -109,7 +112,7 @@ export class GameRoom {
   }
 
   publicPlayer(p) {
-    return { id: p.id, nickname: p.nickname, team: p.team, skin: p.skin };
+    return { id: p.id, nickname: p.nickname, team: p.team, skin: p.skin, position: p.position };
   }
 
   publicPlayers() {
@@ -224,6 +227,8 @@ export class GameRoom {
     const now = Date.now();
     const type = data?.type === 'slide' ? 'slide' : 'extend';
     if (now < p.stunnedUntil) return;
+    // Ninguna de las dos tiene sentido con el balón ya en tus propios pies.
+    if (this.ball.ownerId === id) return;
 
     if (type === 'slide') {
       if (now < p.challengeCooldownUntil || p.challenge) return;
@@ -274,14 +279,23 @@ export class GameRoom {
     // más adelante — solo falta descomentar esta línea.
     // this.checkHandball(now);
 
-    // Resolver desafíos activos (cruzar pie / barrida).
+    // Cruzar pie: se resuelve para TODOS los jugadores a la vez (no de a
+    // uno) — así, si dos rivales llegan al balón en el mismo instante y
+    // ambos son elegibles, se puede definir 50/50 en vez de que gane
+    // siempre quien se procesó primero.
+    this.resolveExtends(now);
+
+    // Barrida: tiene su propia lógica de robo/despoje + falta (con
+    // oclusión), se resuelve individualmente.
     for (const p of this.players.values()) {
-      if (!p.challenge) continue;
-      if (now > p.challenge.until) {
-        p.challenge = null;
-        continue;
+      if (p.challenge?.type === 'slide' && !p.challenge.resolved) {
+        this.resolveSlideChallenge(p, now);
       }
-      if (!p.challenge.resolved) this.resolveChallenge(p, now);
+    }
+
+    // Limpieza de desafíos vencidos (ambos tipos).
+    for (const p of this.players.values()) {
+      if (p.challenge && now > p.challenge.until) p.challenge = null;
     }
 
     if (ball.ownerId) {
@@ -298,11 +312,13 @@ export class GameRoom {
       }
       // Sin colisión de cuerpo ni captura automática: el balón libre pasa
       // de largo (como entre las piernas) salvo que un jugador presione
-      // cruzar pie / barrida (ver resolveChallenge) para recibirlo a propósito.
-      // EXCEPCIÓN: un cuerpo BARRIÉNDOSE sí es sólido — el balón rebota
-      // contra todo el cuerpo tendido (frente, costado o por encima).
+      // cruzar pie / barrida (ver resolve*Challenge) para recibirlo a
+      // propósito. Dos EXCEPCIONES, siempre automáticas (sin clic):
+      //  - un cuerpo BARRIÉNDOSE es sólido (rebota de frente/costado/arriba).
+      //  - un cuerpo EN EL AIRE (salto, clavado de arquero) también lo es.
       for (const p of this.players.values()) {
         if (p.challenge?.type === 'slide') collideBallWithSlidingBody(ball, p);
+        else if (p.pos.y > PLAYER.AIRBORNE_COLLISION_MIN_Y) collideBallWithAirborneBody(ball, p);
       }
     }
   }
@@ -392,51 +408,77 @@ export class GameRoom {
   }
 
   /**
-   * Regla de cruzar pie / barrida — SIEMPRE gana lo que el pie/cuerpo
-   * alcanza PRIMERO (la menor distancia real), nunca "la pelota por
-   * default". Antes se chequeaba la pelota incondicionalmente antes que
-   * al rival, así que una barrida por detrás —donde el cuerpo del rival
-   * bloquea el camino hacia el balón— a veces resolvía como robo igual;
-   * comparar distancias hace que un rival en el medio directamente
-   * bloquee el alcance a la pelota, con resultado consistente siempre.
-   *
-   *  - Pelota alcanzada:
-   *     - Cruzar pie: la controla/roba (queda pegada) si está dentro del
-   *       cilindro de control alrededor del jugador (cualquier ángulo).
-   *     - Barrida: NO controla — solo DESPOJA: el balón queda suelto con
-   *       un empujón corto (contacto pie-balón del lunge).
-   *  - Rival alcanzado (pie extendido, o en la barrida también el cuerpo
-   *    entero deslizándose) -> falta: el infractor queda tendido y luego
-   *    se levanta; la víctima cae empujada en la dirección del golpe
-   *    (velocidad del infractor si venía corriendo, si no la línea
-   *    infractor -> víctima).
+   * Cruzar pie: ¿esté jugador puede tocar la pelota ahora mismo? Cilindro
+   * de control de pies a cabeza, centrado en el jugador (360°) — cubre
+   * también los balones que llegan "volando" bajo.
    */
-  resolveChallenge(p, now) {
+  checkExtendEligibility(p) {
+    const ball = this.ball;
+    if (ball.ownerId === p.id) return false;
+    const dx = ball.pos.x - p.pos.x;
+    const dz = ball.pos.z - p.pos.z;
+    const inRadius = dx * dx + dz * dz < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS;
+    const inHeight = ball.pos.y < ACTIONS.CONTROL_AREA_HEIGHT;
+    return inRadius && inHeight;
+  }
+
+  /**
+   * Cruzar pie: SIN falta — si no toca la pelota, no pasa nada. Se
+   * resuelve para todos los jugadores a la vez (no de a uno): si dos
+   * rivales están en igualdad de condiciones en el mismo instante
+   * (ambos elegibles), se define 50/50 en vez de que gane siempre quien
+   * se procesó primero.
+   */
+  resolveExtends(now) {
+    const contenders = [];
+    for (const p of this.players.values()) {
+      const c = p.challenge;
+      if (c?.type !== 'extend' || c.resolved || now > c.until) continue;
+      if (this.checkExtendEligibility(p)) contenders.push(p);
+    }
+    if (contenders.length === 0) return;
+
+    const winner =
+      contenders.length === 1 ? contenders[0] : contenders[Math.floor(Math.random() * contenders.length)];
+    for (const p of contenders) p.challenge.resolved = true;
+
+    const ball = this.ball;
+    const prevOwner = this.players.get(ball.ownerId);
+    if (prevOwner) prevOwner.captureLockUntil = now + 1000;
+    ball.ownerId = winner.id;
+    ball.capturedAt = now;
+    this.io.emit('possession', { id: winner.id });
+    this.io.emit('steal', { by: winner.id, from: prevOwner ? prevOwner.id : null, type: 'extend' });
+  }
+
+  /**
+   * Barrida — SIEMPRE gana lo que el pie/cuerpo alcanza PRIMERO (la menor
+   * distancia real), nunca "la pelota por default". Comparar distancias
+   * hace que un rival en el medio directamente bloquee el alcance a la
+   * pelota, con resultado consistente siempre.
+   *
+   *  - Pelota alcanzada (controlada por un rival): NO controla — solo
+   *    DESPOJA, el balón queda suelto con un empujón corto.
+   *  - Rival alcanzado (pie del lunge o el cuerpo entero deslizándose):
+   *    falta — el infractor queda tendido y luego se levanta; la víctima
+   *    cae empujada en la dirección del golpe (velocidad del infractor
+   *    si venía corriendo, si no la línea infractor -> víctima).
+   */
+  resolveSlideChallenge(p, now) {
     const c = p.challenge;
-    const reach = c.type === 'slide' ? ACTIONS.SLIDE_REACH : ACTIONS.EXTEND_REACH;
-    const footX = p.pos.x + Math.sin(p.yaw) * reach;
-    const footZ = p.pos.z + Math.cos(p.yaw) * reach;
+    const footX = p.pos.x + Math.sin(p.yaw) * ACTIONS.SLIDE_REACH;
+    const footZ = p.pos.z + Math.cos(p.yaw) * ACTIONS.SLIDE_REACH;
     const ball = this.ball;
 
-    // Distancia² de la pelota al pie/área, solo si es alcanzable.
+    // Distancia² de la pelota al pie del lunge, solo si es alcanzable
+    // (únicamente contra un balón CONTROLADO por un rival — el balón
+    // libre rebota contra el cuerpo en el tick, ver collideBallWithSlidingBody).
     let ballDistSq = Infinity;
-    if (ball.ownerId !== p.id) {
-      if (c.type === 'extend') {
-        // Cilindro de pies a cabeza centrado en el jugador (360°).
-        const dx = ball.pos.x - p.pos.x;
-        const dz = ball.pos.z - p.pos.z;
-        const d = dx * dx + dz * dz;
-        if (d < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS && ball.pos.y < ACTIONS.CONTROL_AREA_HEIGHT) {
-          ballDistSq = d;
-        }
-      } else if (ball.ownerId && ball.pos.y < 0.9) {
-        // Barrida: lunge a ras de piso, solo contra un balón CONTROLADO
-        // por un rival (el balón libre rebota contra el cuerpo en el tick).
-        const bdx = ball.pos.x - footX;
-        const bdz = ball.pos.z - footZ;
-        const d = bdx * bdx + bdz * bdz;
-        if (d < ACTIONS.STEAL_RADIUS * ACTIONS.STEAL_RADIUS) ballDistSq = d;
-      }
+    if (ball.ownerId && ball.ownerId !== p.id && ball.pos.y < 0.9) {
+      const bdx = ball.pos.x - footX;
+      const bdz = ball.pos.z - footZ;
+      const d = bdx * bdx + bdz * bdz;
+      if (d < ACTIONS.STEAL_RADIUS * ACTIONS.STEAL_RADIUS) ballDistSq = d;
     }
 
     // Rival más cercano al pie/cuerpo, si hay contacto real.
@@ -450,16 +492,14 @@ export class GameRoom {
       let d = fdx * fdx + fdz * fdz;
       let within = d < ACTIONS.FOUL_RADIUS * ACTIONS.FOUL_RADIUS;
 
-      // En la barrida el CUERPO deslizándose también comete falta, no
-      // solo el pie del lunge — se usa el contacto más cercano de los dos.
-      if (c.type === 'slide') {
-        const bdx = rival.pos.x - p.pos.x;
-        const bdz = rival.pos.z - p.pos.z;
-        const bd = bdx * bdx + bdz * bdz;
-        if (bd < ACTIONS.SLIDE_BODY_FOUL_RADIUS * ACTIONS.SLIDE_BODY_FOUL_RADIUS && bd < d) {
-          d = bd;
-          within = true;
-        }
+      // El CUERPO deslizándose también comete falta, no solo el pie del
+      // lunge — se usa el contacto más cercano de los dos.
+      const bdx = rival.pos.x - p.pos.x;
+      const bdz = rival.pos.z - p.pos.z;
+      const bd = bdx * bdx + bdz * bdz;
+      if (bd < ACTIONS.SLIDE_BODY_FOUL_RADIUS * ACTIONS.SLIDE_BODY_FOUL_RADIUS && bd < d) {
+        d = bd;
+        within = true;
       }
       if (within && d < bestRivalDistSq) {
         bestRivalDistSq = d;
@@ -501,23 +541,16 @@ export class GameRoom {
       c.resolved = true;
       // El rival despojado no puede re-capturar al instante: el despojo debe "quedarse".
       if (prevOwner) prevOwner.captureLockUntil = now + 1000;
-      if (c.type === 'slide') {
-        // La barrida solo quita la posesión: balón suelto, empujón corto.
-        ball.ownerId = null;
-        ball.vel.x = Math.sin(p.yaw) * 3.5;
-        ball.vel.z = Math.cos(p.yaw) * 3.5;
-        ball.vel.y = 0.8;
-        p.captureLockUntil = now + 400;
-      } else {
-        // Cruzar pie sí controla: queda pegada.
-        ball.ownerId = p.id;
-        ball.capturedAt = now;
-        this.io.emit('possession', { id: p.id });
-      }
+      // La barrida solo quita la posesión: balón suelto, empujón corto.
+      ball.ownerId = null;
+      ball.vel.x = Math.sin(p.yaw) * 3.5;
+      ball.vel.z = Math.cos(p.yaw) * 3.5;
+      ball.vel.y = 0.8;
+      p.captureLockUntil = now + 400;
       this.io.emit('steal', {
         by: p.id,
         from: prevOwner ? prevOwner.id : null,
-        type: c.type,
+        type: 'slide',
       });
       return;
     }
@@ -554,7 +587,7 @@ export class GameRoom {
     this.io.emit('foul', {
       offender: p.id,
       victim: rival.id,
-      type: c.type,
+      type: 'slide',
       stunMs: ACTIONS.FOUL_STUN_MS,
       dir: [dirX, dirZ],
       speed: offenderSpeed,

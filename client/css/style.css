@@ -70,7 +70,8 @@ body {
   outline: none;
 }
 
-#skin-select {
+#skin-select,
+#position-select {
   padding: 12px 10px;
   border-radius: 8px;
   border: none;

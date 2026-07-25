@@ -18,7 +18,8 @@ sokkaio/
 ├── client/assets/
 │   ├── steve.gltf           # Modelo del personaje (Blockbench, con skinning)
 │   └── skins/               # Texturas de skin: <nombre>.png = nombre de la skin en juego
-│                            #   (listadas por GET /api/skins, elegibles in-game)
+│                            #   (listadas por GET /api/skins, elegibles in-game
+│                            #   junto con la posición FIELD/GK)
 ├── server/
 │   ├── index.js             # Express (estáticos + healthcheck) + Socket.IO
 │   └── game/
@@ -176,32 +177,51 @@ en ~5 s. Bajo el 10 % no se puede sprintar (evita spam de micro-sprints).
 
 ### Cruzar pie (clic ruedita) y barrida (clic derecho)
 
-Ambos se resuelven **en el servidor** durante la ventana activa de la
-acción:
+Ambos se resuelven **en el servidor**, con lógicas separadas
+(`resolveExtends` / `resolveSlideChallenge`), y **ninguno funciona con
+el balón ya en los propios pies** (`onChallenge` los rechaza de entrada
+si `ball.ownerId === id`).
 
-- **Cruzar pie** (SIN cooldown, spameable o cronometrado): si la pelota
-  está dentro del **cilindro de control** alrededor del jugador —círculo
-  de `CONTROL_AREA_RADIUS`, de pies a cabeza (`CONTROL_AREA_HEIGHT`),
-  cualquier ángulo— → la controla/roba. Cubre también los balones que
-  llegan "volando" bajo, no solo los que ya tocaron el piso. El cliente
-  dibuja el círculo bajo los pies del jugador local. La falta se evalúa
-  con el pie extendido hacia adelante (`EXTEND_REACH` + `FOUL_RADIUS`).
+- **Cruzar pie** (SIN cooldown ni falta): si la pelota está dentro del
+  **cilindro de control** alrededor del jugador —círculo de
+  `CONTROL_AREA_RADIUS` (0.63 m, -30 % del original), de pies a cabeza
+  (`CONTROL_AREA_HEIGHT`), cualquier ángulo— → la controla/roba. Cubre
+  también los balones que llegan "volando" bajo, no solo los que ya
+  tocaron el piso. **Si no toca la pelota, no pasa absolutamente nada**
+  — no hay falta por cruzar pie; es un gesto sutil, sin consecuencias si
+  falla. El cliente dibuja el círculo bajo los pies del jugador local.
+  La animación es una metida de pie breve (`EXTEND_DURATION_MS`, ~220 ms)
+  que se reproduce en cada clic; si llega un clic nuevo mientras la
+  anterior sigue en curso, se guarda uno para reproducir apenas termine
+  (`local.extendQueued`), en vez de cortarla o perderlo.
 - **Barrida** (con cooldown): **no controla el balón**. Si el pie del
   lunge conecta con una pelota controlada por el rival (`STEAL_RADIUS`)
   → solo lo **despoja** (balón suelto con un empujón corto). Si contacta
   al rival — pie o **cuerpo** deslizándose (`SLIDE_BODY_FOUL_RADIUS`) —
-  es **falta**.
-- Toda falta aturde al infractor 3 s y la víctima cae empujada.
+  es **falta**, aturde al infractor 3 s y la víctima cae empujada.
 
-#### Prioridad pelota vs. rival, y oclusión de cuerpo
+#### Cruzar pie simultáneo: 50/50
 
-`resolveChallenge` compara la distancia² del intento a la pelota contra
-la distancia² al rival más cercano — **gana lo que el pie/cuerpo alcanza
-primero**, nunca "la pelota por default". Antes se chequeaba la pelota
-sin condición alguna antes que al rival, así que una barrida por detrás
-—donde el cuerpo del rival bloquea el camino hacia el balón— a veces
-resolvía como robo de todos modos, con resultados inconsistentes entre
-intentos casi idénticos.
+`resolveExtends` se corre **una vez por tick para todos los jugadores a
+la vez**, no jugador por jugador: junta a todos los que tienen un
+cruzar-pie activo y están en condiciones de tocar la pelota ese mismo
+tick (dentro de su propio cilindro de control). Si hay un solo elegible,
+gana; si hay dos o más — dos rivales llegaron en el mismo instante y en
+igualdad de condiciones —, se sortea 50/50 entre ellos
+(`Math.random()`, verificado ~50/50 en 400 simulaciones). Antes de este
+cambio se resolvía jugador por jugador según el orden del `Map`, así que
+ante una disputa simultánea siempre ganaba el mismo (quien se procesara
+primero), nunca un verdadero empate.
+
+#### Barrida: prioridad pelota vs. rival, y oclusión de cuerpo
+
+`resolveSlideChallenge` compara la distancia² del intento a la pelota
+contra la distancia² al rival más cercano — **gana lo que el pie/cuerpo
+alcanza primero**, nunca "la pelota por default". Antes se chequeaba la
+pelota sin condición alguna antes que al rival, así que una barrida por
+detrás —donde el cuerpo del rival bloquea el camino hacia el balón— a
+veces resolvía como robo de todos modos, con resultados inconsistentes
+entre intentos casi idénticos.
 
 Además, sobre ese resultado por distancia se aplica un chequeo de
 **oclusión**: si el rival alcanzado queda sobre la línea recta entre el
@@ -241,6 +261,12 @@ persigue el objetivo con aceleración/desaceleración (`ACCEL_JOG`,
 `ACCEL_SPRINT`, `DECEL`) — el trote reacciona rápido, el sprint tarda más
 en estirarse, y soltar el movimiento frena con una breve inercia.
 
+**Stamina**: la duración del sprint (tiempo hasta vaciarse) subió un
++50 % — `STAMINA_MAX` escaló de 115 a 172.5 sin tocar `STAMINA_DRAIN_PER_S`
+(26). Para que el **tiempo de recarga completa** no cambiara (sigue en
+~5 s), `STAMINA_REGEN_PER_S` escaló en la misma proporción (23 → 34.5):
+`MAX/REGEN` da 5 s antes y después.
+
 ### Remate: origen y potencia por tramos
 
 El balón sale **siempre desde adelante del pateador, en su último punto**:
@@ -253,10 +279,12 @@ La potencia está **muy adelantada**: con la barra recién empezada
 (`KICK_PIVOT_CHARGE`, ~20 %) el remate ya "se siente" fuerte de verdad
 (`KICK_PIVOT_SPEED`) — antes hacía falta cargar ~75-80 % para sentir algo,
 ese mismo punch ahora se siente a los ~20 %. De ahí a la barra llena sigue
-creciendo hasta el máximo (`KICK_POWER`, sin cambios — ya estaba bien).
-Es una curva de dos tramos: `[0, PIVOT]` con ease-in cuadrático (el toque
-mínimo se mantiene suave, ~1 m) y `[PIVOT, 1]` con crecimiento sostenido
-(exponente `KICK_CURVE` bajo) hasta el tope.
+creciendo hasta el máximo (`KICK_POWER`). Es una curva de dos tramos:
+`[0, PIVOT]` con ease-in cuadrático (el toque mínimo se mantiene suave,
+~1 m) y `[PIVOT, 1]` con crecimiento sostenido (exponente `KICK_CURVE`
+bajo) hasta el tope. Los tres segmentos (`KICK_MIN_SPEED`,
+`KICK_PIVOT_SPEED`, `KICK_POWER`) están un +10 % por encima de sus
+valores previos.
 
 ### Colisiones del balón conducido y confinamiento
 
@@ -293,6 +321,41 @@ seguía trasladándolo. Ahora:
   infractor si venía corriendo, o si estaba quieto, la línea
   infractor → víctima; el evento `foul` viaja con `dir`/`speed` para que
   el cliente de la víctima lo aplique.
+
+### Colisión aérea: cualquier salto conecta con el balón, sin clic
+
+Mientras un jugador está en el aire (`pos.y > AIRBORNE_COLLISION_MIN_Y`)
+—salto normal o el clavado de arquero— el balón libre **siempre**
+rebota contra su cuerpo, automáticamente, sin necesidad de ningún clic
+(`collideBallWithAirborneBody`, llamada para todos los jugadores en el
+tick, igual que la colisión de la barrida). Mismo criterio de zonas que
+la barrida pero con el cuerpo vertical:
+
+| Zona | Resultado |
+|---|---|
+| **Cabeza** | Cabezazo/despeje dirigido hacia adelante, combinando la velocidad del balón con el envión del salto — jugada de **ataque** (cabecear un centro). |
+| **Torso/brazos** | Bloqueo — absorbe casi toda la energía — jugada **defensiva** (tapar un remate). |
+| **Piernas** | Rebote de fuerza media. |
+
+Solo aplica al balón **libre** (mismo criterio que la barrida: el balón
+en los pies de alguien no se ve afectado por saltos ajenos).
+
+### Sistema de arquero (GK)
+
+La pantalla de ingreso tiene un selector de posición junto al de skin
+(`FIELD` / `GK`), que viaja en el `join` y el servidor reenvía a todos
+(`publicPlayer().position`) — otros jugadores ven "(GK)" junto al nombre
+de quien lo eligió.
+
+Solo un jugador en posición `GK` puede hacer el **clavado lateral**:
+mientras está en el aire (ya saltó) y se mueve claramente al costado
+(input de strafe > 0.3), presionar cruzar pie (clic ruedita) dispara un
+salto lateral a **media altura** (`DIVE_HEIGHT_MULT = 0.5`, la velocidad
+vertical se relanza a `JUMP_SPEED·√0.5` para que el pico sea la mitad) con
+deriva constante hacia el costado (`DIVE_SIDE_SPEED`) hasta aterrizar —
+sin control de WASD durante el clavado. No hace falta nada especial para
+que colisione con el balón: al estar en el aire, ya cae bajo la colisión
+aérea automática de arriba (misma lógica de zonas, misma cápsula).
 
 ## Optimización (anti-lag)
 

@@ -24,6 +24,7 @@ export class GameClient {
 
     this.myId = null;
     this.myTeam = 0;
+    this.myPosition = 'FIELD'; // 'GK' habilita el clavado lateral
     this.characters = new Map(); // id -> SteveCharacter
     this.nicknames = new Map();
 
@@ -46,6 +47,10 @@ export class GameClient {
       knockedUntil: 0, // víctima de una falta: cayendo por el empujón
       knockDirX: 0,
       knockDirZ: 0,
+      extendQueued: false, // un clic llegó mientras la metida de pie anterior seguía en curso
+      diving: false, // arquero: clavado lateral en el aire
+      diveDirX: 0,
+      diveDirZ: 0,
     };
     this.ballOwnerId = null;
     this.sendAccumulator = 0;
@@ -88,6 +93,7 @@ export class GameClient {
     net.on('joined', (data) => {
       this.myId = data.id;
       this.myTeam = data.team;
+      this.myPosition = data.position || 'FIELD';
       this.local.pos.set(data.spawn.x, 0, data.spawn.z);
       this.hud.setScore(data.score);
       this.hud.show();
@@ -158,7 +164,7 @@ export class GameClient {
 
   addCharacter(p) {
     if (this.characters.has(p.id)) return;
-    const ch = new SteveCharacter(p.team, p.nickname, p.skin);
+    const ch = new SteveCharacter(p.team, p.nickname, p.skin, p.position);
     this.characters.set(p.id, ch);
     this.nicknames.set(p.id, p.nickname);
     this.scene.add(ch.group);
@@ -187,7 +193,6 @@ export class GameClient {
     const now = performance.now();
     const stunned = now < L.stunnedUntil;
     const sliding = now < L.slideUntil;
-    const inAction = now < L.actionUntil;
     const grounded = now < L.groundUntil; // infractor de barrida, tendido
     const knocked = now < L.knockedUntil; // víctima de falta, cayendo
 
@@ -195,8 +200,28 @@ export class GameClient {
     const md = this.input.consumeMouseDelta();
     this.cameraCtrl.applyMouseDelta(md.x, md.y);
 
+    // Barrer y cruzar pie no tienen sentido con el balón ya en tus propios
+    // pies — quedan bloqueados mientras lo controlás.
+    const controllingBall = this.ballOwnerId === this.myId;
+
     // ---- acciones
     if (!stunned && !sliding && !knocked) {
+      // Arquero: clavado lateral a media altura mientras está en el aire
+      // y se mueve claramente al costado (reusa el botón de cruzar pie).
+      let diveTriggered = false;
+      if (this.myPosition === 'GK' && !L.onGround && !L.diving) {
+        const axis = this.input.moveAxis;
+        if (Math.abs(axis.x) > 0.3 && this.input.consume('extend')) {
+          const camYaw = this.cameraCtrl.yaw;
+          const side = Math.sign(axis.x);
+          L.diving = true;
+          L.diveDirX = -side * Math.cos(camYaw);
+          L.diveDirZ = side * Math.sin(camYaw);
+          L.velY = PLAYER.JUMP_SPEED * Math.sqrt(PLAYER.DIVE_HEIGHT_MULT);
+          diveTriggered = true;
+        }
+      }
+
       // Remate cargado (sin cooldown): mantener clic izq llena la barra
       // y muestra la línea de dirección según la cámara.
       if (this.input.kickHeld) {
@@ -213,13 +238,20 @@ export class GameClient {
         L.yaw = this.cameraCtrl.yaw;
         this.kickCharge = 0;
       }
-      // Cruzar pie: SIN cooldown — spameable o cronometrado al llegar la pelota.
-      if (this.input.consume('extend')) {
+      // Cruzar pie: SIN cooldown — spameable o cronometrado al llegar la
+      // pelota. La animación es sutil y dura poco; si llega un clic nuevo
+      // mientras la anterior sigue en curso, se guarda uno para reproducir
+      // apenas termine (en vez de superponerse o perderse).
+      if (!diveTriggered && !controllingBall && this.input.consume('extend')) {
         this.net.sendChallenge('extend');
-        L.anim = ANIM.EXTEND;
-        L.actionUntil = now + ACTIONS.EXTEND_DURATION_MS;
+        if (now >= L.actionUntil || L.anim !== ANIM.EXTEND) {
+          L.anim = ANIM.EXTEND;
+          L.actionUntil = now + ACTIONS.EXTEND_DURATION_MS;
+        } else {
+          L.extendQueued = true;
+        }
       }
-      if (this.input.consume('slide') && now > L.slideCdUntil && L.onGround) {
+      if (!controllingBall && this.input.consume('slide') && now > L.slideCdUntil && L.onGround) {
         this.net.sendChallenge('slide');
         L.slideUntil = now + ACTIONS.SLIDE_DURATION_MS;
         L.slideCdUntil = now + ACTIONS.SLIDE_COOLDOWN_MS;
@@ -229,6 +261,13 @@ export class GameClient {
         L.velY = PLAYER.JUMP_SPEED;
         L.onGround = false;
       }
+
+      // Reproducir la metida de pie encolada apenas termina la anterior.
+      if (L.extendQueued && now >= L.actionUntil) {
+        L.extendQueued = false;
+        L.anim = ANIM.EXTEND;
+        L.actionUntil = now + ACTIONS.EXTEND_DURATION_MS;
+      }
     } else {
       // Descartar acciones encoladas mientras está bloqueado.
       this.input.consume('kickRelease');
@@ -236,10 +275,11 @@ export class GameClient {
       this.input.consume('slide');
       this.input.consume('jump');
       this.kickCharge = 0;
+      L.extendQueued = false;
     }
 
     // Línea de puntería + barra de poder mientras se carga el remate.
-    const charging = this.input.kickHeld && !stunned && !sliding && !knocked;
+    const charging = this.input.kickHeld && !stunned && !sliding && !knocked && !L.diving;
     this.aimLine.visible = charging;
     if (charging) {
       const len = 3.5 + this.kickCharge * 8.5;
@@ -263,6 +303,12 @@ export class GameClient {
       L.curSpeed = ACTIONS.KNOCKBACK_SPEED * t;
       moveX = L.knockDirX;
       moveZ = L.knockDirZ;
+    } else if (L.diving) {
+      // Clavado del arquero: deriva lateral constante mientras está en
+      // el aire, sin control de WASD (aterriza solo con la gravedad normal).
+      L.curSpeed = PLAYER.DIVE_SIDE_SPEED;
+      moveX = L.diveDirX;
+      moveZ = L.diveDirZ;
     } else if (sliding) {
       // La barrida es un lunge sin control de dirección (velocidad propia,
       // sin pasar por la aceleración de trote/sprint).
@@ -363,13 +409,21 @@ export class GameClient {
         L.pos.y = 0;
         L.velY = 0;
         L.onGround = true;
+        L.diving = false; // aterrizó: devuelve el control normal
       }
     }
 
     // ---- estado de animación
-    // Prioridad: cayendo por el golpe > tendido tras cometer la falta >
-    // aturdido de pie > barrida > acción en curso > salto > movimiento.
+    // inAction se recalcula ACÁ (no al principio de la función): el bloque
+    // de acciones recién actualizó actionUntil este mismo frame, así que
+    // calcularlo antes dejaba la pose recién iniciada (kick/extend) un
+    // frame pisada por IDLE/JOG.
+    const inAction = now < L.actionUntil;
+    // Prioridad: cayendo por el golpe > clavado de arquero > tendido tras
+    // cometer la falta > aturdido de pie > barrida > acción en curso >
+    // salto > movimiento.
     if (knocked) L.anim = ANIM.KNOCKED;
+    else if (L.diving) L.anim = ANIM.DIVE;
     else if (grounded) L.anim = ANIM.SLIDE; // tendido, misma pose que la barrida
     else if (stunned) L.anim = ANIM.STUNNED;
     else if (sliding) L.anim = ANIM.SLIDE;

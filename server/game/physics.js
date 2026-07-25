@@ -83,6 +83,94 @@ export function collideBallWithArms(ball, player) {
 }
 
 /**
+ * Colisión balón vs. un jugador EN EL AIRE (salto normal, o clavado
+ * lateral de arquero): el balón SIEMPRE rebota contra el cuerpo mientras
+ * está en el aire, nunca lo atraviesa. No hace falta clic — es automática
+ * para cualquier jugador saltando, y sirve tanto para cortar/despejar
+ * (jugada defensiva) como para cabecear/empujar hacia adelante (ataque).
+ * La respuesta depende de la ZONA de contacto (igual criterio que la
+ * barrida, pero con el cuerpo vertical):
+ *
+ *   - CABEZA: despeje/cabezazo dirigido hacia adelante, combinando la
+ *     velocidad del balón con el envión del salto (jugada de ataque).
+ *   - TORSO/BRAZOS: bloqueo — absorbe casi toda la energía (jugada
+ *     defensiva, tapar un remate).
+ *   - PIERNAS: rebote de fuerza media.
+ *
+ * Devuelve true si hubo contacto.
+ */
+export function collideBallWithAirborneBody(ball, player) {
+  const sin = Math.sin(player.yaw);
+  const cos = Math.cos(player.yaw);
+
+  let best = null;
+  let bestDistSq = Infinity;
+  for (const c of LIMB_CAPSULES) {
+    const ox = player.pos.x + c.lat * cos + c.fwd * sin;
+    const oz = player.pos.z - c.lat * sin + c.fwd * cos;
+    const cp = closestPointOnCapsule(ox, player.pos.y + c.y0, player.pos.y + c.y1, oz, ball.pos.x, ball.pos.y, ball.pos.z);
+    const dx = ball.pos.x - cp.x;
+    const dy = ball.pos.y - cp.y;
+    const dz = ball.pos.z - cp.z;
+    const distSq = dx * dx + dy * dy + dz * dz;
+    const minDist = BALL.RADIUS + c.r;
+    if (distSq < minDist * minDist && distSq < bestDistSq) {
+      bestDistSq = distSq;
+      best = { c, dx, dy, dz, minDist };
+    }
+  }
+  if (!best) return false;
+
+  const { c, dx, dy, dz, minDist } = best;
+  const dist = Math.sqrt(Math.max(bestDistSq, 1e-6));
+  const nx = dx / dist;
+  const ny = dy / dist;
+  const nz = dz / dist;
+  const push = minDist - dist;
+  ball.pos.x += nx * push;
+  ball.pos.y += ny * push;
+  ball.pos.z += nz * push;
+
+  const pvx = player.vel?.x ?? 0;
+  const pvz = player.vel?.z ?? 0;
+  const playerSpeed = Math.hypot(pvx, pvz);
+  const ballSpeed = Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z);
+
+  if (c.name === 'head') {
+    // CABEZA: despeje/cabezazo dirigido hacia adelante.
+    const out = ballSpeed * 0.5 + playerSpeed * 0.8 + 3;
+    ball.vel.x = sin * out;
+    ball.vel.z = cos * out;
+    ball.vel.y = Math.max(ball.vel.y * 0.3, 1.5);
+  } else if (c.name === 'torso' || c.name === 'armL' || c.name === 'armR') {
+    // TORSO/BRAZOS: bloqueo defensivo — absorbe casi toda la energía.
+    ball.vel.x = ball.vel.x * 0.2 + pvx * 0.25;
+    ball.vel.y *= 0.25;
+    ball.vel.z = ball.vel.z * 0.2 + pvz * 0.25;
+  } else {
+    // PIERNAS: rebote de fuerza media.
+    const vn = ball.vel.x * nx + ball.vel.y * ny + ball.vel.z * nz;
+    if (vn < 0) {
+      const rest = 0.5;
+      ball.vel.x -= (1 + rest) * vn * nx;
+      ball.vel.y -= (1 + rest) * vn * ny;
+      ball.vel.z -= (1 + rest) * vn * nz;
+    }
+    ball.vel.x += pvx * 0.3;
+    ball.vel.z += pvz * 0.3;
+  }
+
+  // Nunca dejar componente de velocidad hacia adentro del cuerpo.
+  const vnOut = ball.vel.x * nx + ball.vel.y * ny + ball.vel.z * nz;
+  if (vnOut < 0) {
+    ball.vel.x -= vnOut * nx;
+    ball.vel.y -= vnOut * ny;
+    ball.vel.z -= vnOut * nz;
+  }
+  return true;
+}
+
+/**
  * Colisión balón vs. el CUERPO ENTERO de un jugador barriéndose: una
  * cápsula horizontal a ras de piso desde la cadera hasta el pie extendido.
  * El balón no atraviesa el cuerpo venga de donde venga, y la respuesta

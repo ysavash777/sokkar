@@ -50,7 +50,8 @@ io.on('connection', (socket) => {
     const skins = listSkins();
     const requested = String(payload?.skin ?? '');
     const skin = skins.includes(requested) ? requested : (skins.includes('steve') ? 'steve' : skins[0]);
-    room.addPlayer(socket, nickname, skin);
+    const position = payload?.position === 'GK' ? 'GK' : 'FIELD';
+    room.addPlayer(socket, nickname, skin, position);
   });
 
   socket.on('state', (data) => room.onPlayerState(socket.id, data));

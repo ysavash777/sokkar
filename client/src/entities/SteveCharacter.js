@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/utils/SkeletonUtils.js';
-import { ANIM, TEAM_COLORS } from '/shared/constants.js';
+import { ANIM, TEAM_COLORS, ACTIONS } from '/shared/constants.js';
 
 /**
  * Personaje "Steve" cargado desde un modelo .gltf hecho en Blockbench
@@ -91,11 +91,12 @@ function poseLimb(node, angleX) {
 }
 
 export class SteveCharacter {
-  constructor(team, nickname, skin = DEFAULT_SKIN) {
+  constructor(team, nickname, skin = DEFAULT_SKIN, position = 'FIELD') {
     this.group = new THREE.Group();
     this.team = team;
     this.nickname = nickname;
     this.skin = skin || DEFAULT_SKIN;
+    this.position = position === 'GK' ? 'GK' : 'FIELD';
     this.walkPhase = 0;
     this.animState = ANIM.IDLE;
     this.actionTimer = 0; // temporizador de kick/extend/slide
@@ -145,7 +146,8 @@ export class SteveCharacter {
       n.userData.basePos = n.position.clone();
     }
 
-    this.nameSprite = this.makeNameSprite(this.nickname, this.team);
+    const label = this.position === 'GK' ? `${this.nickname} (GK)` : this.nickname;
+    this.nameSprite = this.makeNameSprite(label, this.team);
     this.group.add(this.nameSprite);
 
     this.ready = true;
@@ -186,6 +188,7 @@ export class SteveCharacter {
 
     // Reset de pose base.
     this.body.rotation.x = 0;
+    this.body.rotation.z = 0;
     this.body.position.y = 0;
 
     if (s === ANIM.KNOCKED) {
@@ -222,12 +225,16 @@ export class SteveCharacter {
     }
 
     if (s === ANIM.EXTEND) {
-      // Cruzar pie: extensión defensiva corta del pie derecho.
-      poseLimb(this.legR, -0.9);
-      if (this.legR) this.legR.position.z += 0.12;
-      poseLimb(this.legL, 0.15);
-      poseLimb(this.armL, 0.3);
-      poseLimb(this.armR, -0.3);
+      // Cruzar pie: metida de pie SUTIL hacia el balón (nada de extender
+      // mucho la pierna) — dura poco, pero se nota. Con un swing suave
+      // (seno) en vez de saltar directo a la pose, para que se perciba
+      // incluso en clics muy seguidos.
+      const t = Math.min(this.actionTimer / (ACTIONS.EXTEND_DURATION_MS / 1000), 1);
+      const swing = Math.sin(t * Math.PI); // sube y vuelve, sin quedar trabada
+      poseLimb(this.legR, -0.35 * swing);
+      poseLimb(this.legL, 0.1 * swing);
+      poseLimb(this.armL, 0.12 * swing);
+      poseLimb(this.armR, -0.12 * swing);
       return;
     }
 
@@ -237,6 +244,17 @@ export class SteveCharacter {
       poseLimb(this.armR, 0.6);
       poseLimb(this.legL, 0);
       poseLimb(this.legR, 0);
+      return;
+    }
+
+    if (s === ANIM.DIVE) {
+      // Clavado lateral del arquero: cuerpo estirado, brazos abiertos.
+      this.body.rotation.x = 0.45;
+      this.body.rotation.z = 0.55;
+      poseLimb(this.legL, 0.25);
+      poseLimb(this.legR, -0.25);
+      poseLimb(this.armL, -1.3);
+      poseLimb(this.armR, 1.3);
       return;
     }
 

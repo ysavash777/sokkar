@@ -39,11 +39,21 @@ export const PLAYER = {
   // Stamina: se agota sprintando; NO recarga mientras Shift esté presionado
   // (evita el parpadeo trote/sprint al rozar el umbral). Recarga completa
   // en ~5 s al soltar Shift; parado del todo recarga más rápido.
-  STAMINA_MAX: 115,
+  // Duración del sprint (MAX/DRAIN) subida +50% respecto de la versión
+  // anterior; DRAIN sin tocar y REGEN escalado junto con MAX para que el
+  // tiempo de recarga completa (MAX/REGEN) se mantenga en los mismos ~5 s.
+  STAMINA_MAX: 172.5,
   STAMINA_DRAIN_PER_S: 26,
-  STAMINA_REGEN_PER_S: 23,
+  STAMINA_REGEN_PER_S: 34.5,
   STAMINA_REGEN_IDLE_MULT: 1.6,
   STAMINA_MIN_TO_SPRINT: 10,
+  // Arquero: clavado lateral a media altura mientras salta y se mueve al
+  // costado (reusa el botón de cruzar pie). Solo disponible en posición GK.
+  DIVE_SIDE_SPEED: 6.5,
+  DIVE_HEIGHT_MULT: 0.5, // fracción de la altura de salto normal
+  // Umbral de altura para considerar a un jugador "en el aire" a efectos
+  // de la colisión automática con el balón (salto, clavado, etc.).
+  AIRBORNE_COLLISION_MIN_Y: 0.15,
 };
 
 export const DRIBBLE = {
@@ -59,11 +69,11 @@ export const ACTIONS = {
   // Remate cargado: mantener clic izq llena la barra (SIN cooldown).
   // Potencia por tramos MUY adelantada: casi al toque (KICK_PIVOT_CHARGE)
   // ya se siente un remate fuerte (KICK_PIVOT_SPEED); de ahí a la barra
-  // llena sigue creciendo hasta KICK_POWER (el único tramo que ya estaba bien).
-  KICK_POWER: 40, // velocidad a barra llena (charge = 1)
-  KICK_MIN_SPEED: 0.72, // velocidad con la barra recién empezada (toque ~1 m)
+  // llena sigue creciendo hasta KICK_POWER. Los tres segmentos +10%.
+  KICK_POWER: 44, // velocidad a barra llena (charge = 1)
+  KICK_MIN_SPEED: 0.792, // velocidad con la barra recién empezada (toque ~1 m)
   KICK_PIVOT_CHARGE: 0.2, // a partir de acá el remate ya "se siente"
-  KICK_PIVOT_SPEED: 15, // velocidad en KICK_PIVOT_CHARGE
+  KICK_PIVOT_SPEED: 16.5, // velocidad en KICK_PIVOT_CHARGE
   KICK_LOW_CURVE: 2, // exponente del tramo [0, PIVOT]: ease-in suave (toque sigue siendo toque)
   KICK_CURVE: 1.15, // exponente del tramo [PIVOT, 1]: crecimiento sostenido hasta el máximo
   KICK_LIFT: 8,
@@ -75,9 +85,10 @@ export const ACTIONS = {
   // Controla/roba el balón si está dentro del área de control circular
   // alrededor del jugador (cualquier ángulo). Es la única forma de "recibir"
   // un balón libre (si no se usa, la pelota pasa entre las piernas).
-  EXTEND_REACH: 1.0, // usado solo para la falta (pie extendido hacia el rival)
-  EXTEND_DURATION_MS: 350,
-  CONTROL_AREA_RADIUS: 0.9, // círculo en la base del jugador (el personaje cabe en él)
+  // NO cobra falta: si no toca el balón, no pasa nada. Si dos rivales
+  // llegan en el mismo instante y ambos son elegibles, se define 50/50.
+  EXTEND_DURATION_MS: 220, // dura poco pero se nota: metida de pie sutil
+  CONTROL_AREA_RADIUS: 0.63, // círculo en la base del jugador (-30% del original 0.9)
   CONTROL_AREA_HEIGHT: 2.0, // cilindro de pies a cabeza: también controla balones que vienen volando
 
   // Barrida (clic derecho): si toca el balón, se lo queda pegado;
@@ -122,6 +133,7 @@ export const ANIM = {
   SLIDE: 6,
   STUNNED: 7,
   KNOCKED: 8, // víctima de una falta, cayendo por el impacto
+  DIVE: 9, // clavado lateral del arquero
 };
 
 export const TEAM_COLORS = [0xd63b3b, 0x2f6fd6]; // rojo vs azul
