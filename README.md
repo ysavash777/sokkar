@@ -3,13 +3,20 @@
 Juego de fútbol **4v4 online** en tercera persona, hecho con **Three.js**,
 HTML, CSS y JS puro (sin build step) + **Node.js / Socket.IO**.
 
-Entrás con un nickname y ya estás en la partida.
+Entrás con un nickname, elegís una skin y ya estás en la partida.
+
+## Skins
+
+La pantalla de ingreso trae un selector con las skins disponibles. Para
+agregar una, soltá un `.png` en [client/assets/skins/](client/assets/skins) —
+el nombre del archivo (sin extensión) es el nombre que aparece en el
+selector. No hace falta tocar código.
 
 ## Controles
 
 | Entrada | Acción |
 |---|---|
-| `WASD` | Moverse (relativo a la cámara, con strafe lateral) |
+| `WASD` | Moverse (relativo a la cámara, con strafe lateral y aceleración/frenado con inercia) |
 | `Mouse` | Cámara 360° (no rota al personaje si está quieto) |
 | `Shift` | Sprint (stamina, recarga completa en ~5 s) |
 | `Espacio` | Salto |
@@ -17,14 +24,19 @@ Entrás con un nickname y ya estás en la partida.
 | `Clic ruedita` | Cruzar pie (sin cooldown) — controla/roba el balón dentro del círculo bajo tus pies, en cualquier ángulo |
 | `Clic derecho` | Barrida |
 
-> Cruzar pie: si la pelota está dentro del **círculo de control** que ves
-> en la base de tu personaje, te la quedás — podés spamear el botón o
-> tocarlo justo cuando llega. Barrida: **no controla** — si tu pie conecta
-> la pelota del rival, se la **quita** (queda suelta); si contactás al
-> **rival** (pie o cuerpo), es **falta** (3 s aturdido). Mientras barrés,
-> tu cuerpo tendido bloquea el balón libre (rebota, no te atraviesa).
-> El balón libre no se pega solo: si no cruzás el pie, te atraviesa como
-> si pasara entre las piernas.
+> Cruzar pie: si la pelota está dentro del **cilindro de control** que ves
+> marcado en la base de tu personaje (de tus pies a tu cabeza, no solo al
+> ras del piso), te la quedás — podés spamear el botón o tocarlo justo
+> cuando llega, incluso si viene un poco volando. Barrida: **no
+> controla** — si tu pie conecta la pelota del rival, se la **quita**
+> (queda suelta); si contactás al **rival** (pie o cuerpo), es **falta**
+> (3 s aturdido). Mientras barrés, tu cuerpo entero es sólido para el
+> balón libre: según le pegue en la **punta del pie** (despeje fuerte
+> hacia adelante), las **piernas** (rebote medio) o el **torso**
+> (absorbe casi toda la energía), la pelota reacciona distinto — es la
+> jugada clave para cortar un pase o empujarla al arco en el momento
+> justo. El balón libre no se pega solo: si no cruzás el pie, te
+> atraviesa como si pasara entre las piernas.
 >
 > Remate: un toque suelto adelanta la pelota ~1 m, media barra ~2 m, y de
 > ahí a barra llena crece hasta el cañonazo. Correr de espaldas es más

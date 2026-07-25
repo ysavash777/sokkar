@@ -70,6 +70,17 @@ body {
   outline: none;
 }
 
+#skin-select {
+  padding: 12px 10px;
+  border-radius: 8px;
+  border: none;
+  font-size: 1rem;
+  background: #fff;
+  color: #111;
+  outline: none;
+  cursor: pointer;
+}
+
 #join-form button {
   padding: 12px 28px;
   border-radius: 8px;

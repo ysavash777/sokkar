@@ -41,7 +41,7 @@ export class GameRoom {
 
   // ---------------------------------------------------------------- lobby
 
-  addPlayer(socket, nickname) {
+  addPlayer(socket, nickname, skin) {
     if (this.players.has(socket.id)) return;
     if (this.players.size >= NET.MAX_PLAYERS) {
       socket.emit('joinError', 'La partida está llena (4v4).');
@@ -52,8 +52,11 @@ export class GameRoom {
     const player = {
       id: socket.id,
       nickname,
+      skin: skin || 'steve',
       team,
       pos: { x: spawn.x, y: 0, z: spawn.z },
+      vel: { x: 0, z: 0 }, // velocidad real estimada (no visible al jugador), usada en física de barrida
+      lastStateAt: 0,
       yaw: team === 0 ? Math.PI / 2 : -Math.PI / 2,
       anim: ANIM.IDLE,
       sprinting: false,
@@ -104,7 +107,7 @@ export class GameRoom {
   }
 
   publicPlayer(p) {
-    return { id: p.id, nickname: p.nickname, team: p.team };
+    return { id: p.id, nickname: p.nickname, team: p.team, skin: p.skin };
   }
 
   publicPlayers() {
@@ -118,6 +121,11 @@ export class GameRoom {
     if (!p || !Array.isArray(data)) return;
     const [x, y, z, yaw, anim, sprinting] = data;
     if (![x, y, z, yaw].every(Number.isFinite)) return;
+
+    const now = Date.now();
+    const prevX = p.pos.x;
+    const prevZ = p.pos.z;
+
     // Clamps anti-trampa: los jugadores viven DENTRO de la cancha (así
     // nadie puede rodear el arco y meter el balón "desde afuera").
     p.pos.x = Math.max(-HALF_L + 0.3, Math.min(HALF_L - 0.3, x));
@@ -127,6 +135,24 @@ export class GameRoom {
     p.anim = anim | 0;
     p.sprinting = !!sprinting;
     p.moving = p.anim === ANIM.JOG || p.anim === ANIM.SPRINT;
+
+    // Velocidad real estimada por diferencia de posición entre estados
+    // (nunca se le muestra al jugador; solo la usa la física, p.ej. la
+    // fuerza de salida del balón al barrerse). Suavizada para no saltar
+    // con la irregularidad de la red, y descartada si el salto es un
+    // teleport/lag spike en vez de movimiento real.
+    const dtMs = now - p.lastStateAt;
+    if (p.lastStateAt > 0 && dtMs > 0 && dtMs < 400) {
+      const dt = dtMs / 1000;
+      const rawVx = (p.pos.x - prevX) / dt;
+      const rawVz = (p.pos.z - prevZ) / dt;
+      if (Math.hypot(rawVx, rawVz) < 25) {
+        const k = 0.5;
+        p.vel.x += (rawVx - p.vel.x) * k;
+        p.vel.z += (rawVz - p.vel.z) * k;
+      }
+    }
+    p.lastStateAt = now;
   }
 
   onKick(id, data) {
@@ -351,18 +377,20 @@ export class GameRoom {
 
     // 1) ¿Conecta con la pelota?
     let touchesBall = false;
-    if (ball.pos.y < 0.9 && ball.ownerId !== p.id) {
+    if (ball.ownerId !== p.id) {
       if (c.type === 'extend') {
-        // Área de control circular centrada en el jugador (360°).
+        // Área de control: CILINDRO de pies a cabeza centrado en el
+        // jugador (360°) — controla también balones que llegan
+        // "volando" bajo, no solo los que ya están en el piso.
         const dx = ball.pos.x - p.pos.x;
         const dz = ball.pos.z - p.pos.z;
-        touchesBall = dx * dx + dz * dz < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS;
-      } else {
-        // La barrida solo tiene sentido contra un balón CONTROLADO por un
-        // rival (el balón libre rebota contra el cuerpo en el tick).
-        if (!ball.ownerId) {
-          touchesBall = false;
-        } else {
+        const inRadius = dx * dx + dz * dz < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS;
+        const inHeight = ball.pos.y < ACTIONS.CONTROL_AREA_HEIGHT;
+        touchesBall = inRadius && inHeight;
+      } else if (ball.pos.y < 0.9) {
+        // Barrida: lunge a ras de piso, solo contra un balón CONTROLADO
+        // por un rival (el balón libre rebota contra el cuerpo en el tick).
+        if (ball.ownerId) {
           const bdx = ball.pos.x - footX;
           const bdz = ball.pos.z - footZ;
           touchesBall = bdx * bdx + bdz * bdz < ACTIONS.STEAL_RADIUS * ACTIONS.STEAL_RADIUS;

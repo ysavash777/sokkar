@@ -43,13 +43,37 @@ const joinScreen = document.getElementById('join-screen');
 const joinForm = document.getElementById('join-form');
 const joinError = document.getElementById('join-error');
 const nicknameInput = document.getElementById('nickname');
+const skinSelect = document.getElementById('skin-select');
+
+// Selector de skin: la lista sale de /api/skins (los .png en
+// client/assets/skins/, nombre de archivo = nombre de la skin).
+const SKIN_STORAGE_KEY = 'sokkaio.skin';
+fetch('/api/skins')
+  .then((r) => r.json())
+  .then((skins) => {
+    if (!Array.isArray(skins) || skins.length === 0) return;
+    const remembered = localStorage.getItem(SKIN_STORAGE_KEY);
+    skinSelect.innerHTML = '';
+    for (const name of skins) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      skinSelect.appendChild(opt);
+    }
+    if (remembered && skins.includes(remembered)) skinSelect.value = remembered;
+  })
+  .catch(() => {
+    /* sin conexión al listado: se usa la skin por defecto del servidor */
+  });
 
 joinForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const nickname = nicknameInput.value.trim();
   if (!nickname) return;
   joinError.textContent = '';
-  net.join(nickname);
+  const skin = skinSelect.value || undefined;
+  if (skin) localStorage.setItem(SKIN_STORAGE_KEY, skin);
+  net.join(nickname, skin);
 });
 
 net.on('joinError', (msg) => {

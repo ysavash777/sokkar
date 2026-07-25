@@ -17,55 +17,67 @@ import { ANIM, TEAM_COLORS } from '/shared/constants.js';
  * basta soltar más PNGs en esa carpeta para agregar skins.
  */
 const MODEL_URL = '/assets/steve.gltf';
-const DEFAULT_SKIN = 'steve';
+export const DEFAULT_SKIN = 'steve';
 const MODEL_SCALE = 0.9; // el rig mide ~2 unidades de alto -> ~1.8 (PLAYER.HEIGHT)
 // La cara del modelo (ojos) está pintada mirando hacia -Z local, pero el
 // juego usa +Z como "adelante" (yaw=0) — se corrige con un giro de 180°.
 // (Verificado mapeando la región UV de la cara frontal contra las normales.)
 const FRONT_ROTATION_Y = Math.PI;
 
-// Un solo material tintado por equipo, compartido entre todas las instancias
-// (todas las mallas del glTF usan el mismo atlas de textura).
+// Geometría del rig: se descarga y clona una sola vez (independiente de
+// la skin). Se guarda también el material "base" del glTF (alphaTest,
+// side, etc.) como plantilla para clonar el material de cada skin.
 let templatePromise = null;
-let teamMaterials = null;
+let baseMaterial = null;
 
 function loadTemplate() {
   if (!templatePromise) {
-    // La textura se carga desde la carpeta de skins con TextureLoader
-    // (GLTFLoader usa createImageBitmap para el PNG embebido, que falla en
-    // algunos entornos; además así las skins son intercambiables por archivo).
-    const texPromise = new THREE.TextureLoader()
-      .loadAsync(`/assets/skins/${DEFAULT_SKIN}.png`)
-      .then((tex) => {
-        tex.flipY = false; // convención glTF (UV con origen arriba-izquierda)
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.magFilter = THREE.NearestFilter;
-        tex.minFilter = THREE.NearestFilter;
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-        return tex;
-      })
-      .catch(() => null);
-
-    templatePromise = Promise.all([new GLTFLoader().loadAsync(MODEL_URL), texPromise]).then(
-      ([gltf, texture]) => {
-        let sourceMat = null;
-        gltf.scene.traverse((o) => {
-          if (o.isMesh && !sourceMat) sourceMat = o.material;
-        });
-        if (texture) sourceMat.map = texture;
-        sourceMat.needsUpdate = true;
-
-        teamMaterials = TEAM_COLORS.map((hex) => {
-          const m = sourceMat.clone();
-          m.color = new THREE.Color(0xffffff).lerp(new THREE.Color(hex), 0.55);
-          return m;
-        });
-        return gltf.scene;
-      },
-    );
+    templatePromise = new GLTFLoader().loadAsync(MODEL_URL).then((gltf) => {
+      gltf.scene.traverse((o) => {
+        if (o.isMesh && !baseMaterial) baseMaterial = o.material;
+      });
+      return gltf.scene;
+    });
   }
   return templatePromise;
+}
+
+// 2 materiales (uno por equipo) por cada skin cargada, compartidos entre
+// todas las instancias que usen esa skin — nombre de archivo = nombre de
+// la skin en juego (client/assets/skins/<nombre>.png).
+const skinMaterialsCache = new Map(); // skinName -> Promise<[matTeam0, matTeam1]>
+
+function loadSkinMaterials(skinName) {
+  if (!skinMaterialsCache.has(skinName)) {
+    const promise = Promise.all([loadTemplate(), loadSkinTexture(skinName)]).then(([, texture]) => {
+      return TEAM_COLORS.map((hex) => {
+        const m = baseMaterial.clone();
+        if (texture) m.map = texture;
+        m.color = new THREE.Color(0xffffff).lerp(new THREE.Color(hex), 0.55);
+        m.needsUpdate = true;
+        return m;
+      });
+    });
+    skinMaterialsCache.set(skinName, promise);
+  }
+  return skinMaterialsCache.get(skinName);
+}
+
+function loadSkinTexture(skinName) {
+  // TextureLoader (basado en <img>) en vez de dejar que GLTFLoader use
+  // createImageBitmap para el PNG embebido, que falla en algunos entornos.
+  return new THREE.TextureLoader()
+    .loadAsync(`/assets/skins/${skinName}.png`)
+    .then((tex) => {
+      tex.flipY = false; // convención glTF (UV con origen arriba-izquierda)
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestFilter;
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      return tex;
+    })
+    .catch(() => null);
 }
 
 const _xAxis = new THREE.Vector3(1, 0, 0);
@@ -79,22 +91,24 @@ function poseLimb(node, angleX) {
 }
 
 export class SteveCharacter {
-  constructor(team, nickname) {
+  constructor(team, nickname, skin = DEFAULT_SKIN) {
     this.group = new THREE.Group();
     this.team = team;
     this.nickname = nickname;
+    this.skin = skin || DEFAULT_SKIN;
     this.walkPhase = 0;
     this.animState = ANIM.IDLE;
     this.actionTimer = 0; // temporizador de kick/extend/slide
     this.ready = false;
 
-    loadTemplate().then((template) => this._build(template));
+    Promise.all([loadTemplate(), loadSkinMaterials(this.skin)]).then(([template, mats]) =>
+      this._build(template, mats[this.team]),
+    );
   }
 
-  _build(template) {
+  _build(template, mat) {
     // SkeletonUtils.clone: rebindea los SkinnedMesh al esqueleto clonado.
     const clone = skeletonClone(template);
-    const mat = teamMaterials[this.team];
     clone.traverse((o) => {
       if (o.isMesh) {
         o.material = mat;

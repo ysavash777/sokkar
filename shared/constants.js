@@ -28,6 +28,12 @@ export const PLAYER = {
   WALK_SPEED: 5.2,
   SPRINT_SPEED: 8.6,
   BACKPEDAL_MULT: 0.62, // correr de espaldas es más lento
+  // Aceleración/desaceleración (m/s²): la velocidad real persigue el
+  // objetivo — trote responde rápido, el sprint tarda más en estirarse,
+  // y al soltar se frena con inercia corta.
+  ACCEL_JOG: 16,
+  ACCEL_SPRINT: 11,
+  DECEL: 20,
   JUMP_SPEED: 7.5,
   GRAVITY: 20,
   // Stamina: se agota sprintando; NO recarga mientras Shift esté presionado
@@ -71,6 +77,7 @@ export const ACTIONS = {
   EXTEND_REACH: 1.0, // usado solo para la falta (pie extendido hacia el rival)
   EXTEND_DURATION_MS: 350,
   CONTROL_AREA_RADIUS: 0.9, // círculo en la base del jugador (el personaje cabe en él)
+  CONTROL_AREA_HEIGHT: 2.0, // cilindro de pies a cabeza: también controla balones que vienen volando
 
   // Barrida (clic derecho): si toca el balón, se lo queda pegado;
   // si contacta al rival, es falta.

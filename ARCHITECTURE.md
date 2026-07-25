@@ -18,6 +18,7 @@ sokkaio/
 ├── client/assets/
 │   ├── steve.gltf           # Modelo del personaje (Blockbench, con skinning)
 │   └── skins/               # Texturas de skin: <nombre>.png = nombre de la skin en juego
+│                            #   (listadas por GET /api/skins, elegibles in-game)
 ├── server/
 │   ├── index.js             # Express (estáticos + healthcheck) + Socket.IO
 │   └── game/
@@ -89,9 +90,17 @@ de módulo) y cada instancia se clona con **`SkeletonUtils.clone`** — un
 descolocado. El material se crea una única vez **por equipo**, tintado
 hacia `TEAM_COLORS`.
 
-**Skins por archivo**: la textura no se toma del glTF sino de
-`client/assets/skins/<nombre>.png` — el nombre del archivo es el nombre de
-la skin en juego; para agregar skins basta soltar más PNGs en esa carpeta.
+**Skins por archivo, elegibles in-game**: la textura no se toma del glTF
+sino de `client/assets/skins/<nombre>.png` — el nombre del archivo es el
+nombre de la skin en juego; para agregar skins basta soltar más PNGs en
+esa carpeta, sin tocar código. El servidor las expone en `GET /api/skins`
+(leyendo el directorio en cada join, valida que el nombre pedido exista
+antes de aceptarlo) y la pantalla de ingreso arma un `<select>` con esa
+lista; la elección viaja en el `join` y el servidor la reenvía a todos
+(`publicPlayer().skin`), así que cada jugador ve la skin real de los
+demás. Los materiales se cachean **por skin** (2 por skin, uno por
+equipo), no por jugador, para que varias skins convivan sin duplicar
+memoria de más.
 
 La animación procedural (caminata, patada, cruzar pie, barrida, aturdido)
 rota los huesos componiendo sobre su pose base (quaternion tal como lo
@@ -171,19 +180,46 @@ Ambos se resuelven **en el servidor** durante la ventana activa de la
 acción, con prioridad pelota → rival:
 
 - **Cruzar pie** (SIN cooldown, spameable o cronometrado): si la pelota
-  está dentro del **área de control circular** alrededor del jugador
-  (`CONTROL_AREA_RADIUS`, cualquier ángulo) → la controla/roba. El cliente
-  dibuja ese círculo bajo los pies del jugador local. La falta se evalúa
+  está dentro del **cilindro de control** alrededor del jugador —círculo
+  de `CONTROL_AREA_RADIUS`, de pies a cabeza (`CONTROL_AREA_HEIGHT`),
+  cualquier ángulo— → la controla/roba. Cubre también los balones que
+  llegan "volando" bajo, no solo los que ya tocaron el piso. El cliente
+  dibuja el círculo bajo los pies del jugador local. La falta se evalúa
   con el pie extendido hacia adelante (`EXTEND_REACH` + `FOUL_RADIUS`).
 - **Barrida** (con cooldown): **no controla el balón**. Si el pie del
   lunge conecta con una pelota controlada por el rival (`STEAL_RADIUS`)
   → solo lo **despoja** (balón suelto con un empujón corto). Si contacta
   al rival — pie o **cuerpo** deslizándose (`SLIDE_BODY_FOUL_RADIUS`) —
-  es **falta**. Además, mientras dura la barrida, el cuerpo tendido es
-  **sólido para el balón libre**: una cápsula horizontal de cadera a pie
-  (`collideBallWithSlidingBody`) lo hace rebotar venga de frente, de
-  costado o por encima.
+  es **falta**.
 - Toda falta aturde al infractor 3 s y la víctima retiene/recibe el balón.
+
+### Física de la barrida contra el balón libre
+
+Mientras dura la barrida, el cuerpo tendido es **sólido para el balón
+libre** (no solo el pie): una cápsula horizontal de la cadera al pie
+extendido (`collideBallWithSlidingBody`) lo hace rebotar venga de frente,
+de costado o por encima. La respuesta depende de la **zona de contacto**
+y de las velocidades reales de la pelota y del jugador (ver "Velocidad
+real del jugador" más abajo):
+
+| Zona | Resultado |
+|---|---|
+| **Punta** (pie extendido) | Despeje frontal: sale disparada hacia adelante combinando la velocidad del balón y el envión de la carrera — ideal para empujar un pase al arco o cortar en defensa. |
+| **Piernas** (tramo medio) | Rebote de fuerza media. |
+| **Torso** (cerca de la cadera) | Absorción: mata casi toda la energía del balón. |
+
+### Velocidad real del jugador (interna, no visible)
+
+El servidor estima la velocidad real de cada jugador por diferencia de
+posición entre estados sucesivos (`onPlayerState`, suavizada y con
+rechazo de saltos tipo teleport). Nunca se muestra en el HUD; la usa la
+física de la barrida para calcular la fuerza de salida del balón.
+
+En el cliente, el movimiento propio ya no salta directo a la velocidad
+objetivo: una velocidad interna (`local.curSpeed`, tampoco visible)
+persigue el objetivo con aceleración/desaceleración (`ACCEL_JOG`,
+`ACCEL_SPRINT`, `DECEL`) — el trote reacciona rápido, el sprint tarda más
+en estirarse, y soltar el movimiento frena con una breve inercia.
 
 ### Remate: origen y potencia por tramos
 

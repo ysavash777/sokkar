@@ -1,12 +1,29 @@
 import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { GameRoom } from './game/GameRoom.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
+const skinsDir = path.join(rootDir, 'client', 'assets', 'skins');
+
+/**
+ * Lista las skins disponibles a partir de los .png en client/assets/skins/
+ * — el nombre del archivo (sin extensión) es el nombre de la skin.
+ */
+function listSkins() {
+  try {
+    return fs
+      .readdirSync(skinsDir)
+      .filter((f) => f.toLowerCase().endsWith('.png'))
+      .map((f) => f.slice(0, -4));
+  } catch {
+    return [];
+  }
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -20,6 +37,7 @@ const staticMaxAge = process.env.NODE_ENV === 'production' ? '1h' : 0;
 app.use(express.static(path.join(rootDir, 'client'), { maxAge: staticMaxAge, index: 'index.html' }));
 app.use('/shared', express.static(path.join(rootDir, 'shared'), { maxAge: staticMaxAge }));
 app.get('/healthz', (_req, res) => res.send('ok'));
+app.get('/api/skins', (_req, res) => res.json(listSkins()));
 
 const room = new GameRoom(io);
 
@@ -27,7 +45,12 @@ io.on('connection', (socket) => {
   socket.on('join', (payload) => {
     const nickname = String(payload?.nickname ?? '').trim().slice(0, 16);
     if (!nickname) return socket.emit('joinError', 'Nickname inválido');
-    room.addPlayer(socket, nickname);
+    // Se valida contra la lista real de archivos — nunca se confía en el
+    // string que manda el cliente para construir una ruta.
+    const skins = listSkins();
+    const requested = String(payload?.skin ?? '');
+    const skin = skins.includes(requested) ? requested : (skins.includes('steve') ? 'steve' : skins[0]);
+    room.addPlayer(socket, nickname, skin);
   });
 
   socket.on('state', (data) => room.onPlayerState(socket.id, data));

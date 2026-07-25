@@ -28,8 +28,8 @@ export class NetworkClient {
     this.handlers[event] = fn;
   }
 
-  join(nickname) {
-    this.socket.emit('join', { nickname });
+  join(nickname, skin) {
+    this.socket.emit('join', { nickname, skin });
   }
 
   sendState(pos, yaw, anim, sprinting) {

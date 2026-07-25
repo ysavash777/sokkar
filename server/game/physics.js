@@ -85,8 +85,17 @@ export function collideBallWithArms(ball, player) {
 /**
  * Colisión balón vs. el CUERPO ENTERO de un jugador barriéndose: una
  * cápsula horizontal a ras de piso desde la cadera hasta el pie extendido.
- * El balón rebota contra ella venga del frente, del costado o por encima
- * (no atraviesa el torso tendido). Devuelve true si hubo contacto.
+ * El balón no atraviesa el cuerpo venga de donde venga, y la respuesta
+ * depende de la ZONA de contacto y de las velocidades de ambos:
+ *
+ *   - PUNTA (pie extendido, t > 0.7): despeje frontal — el balón sale
+ *     hacia adelante de la barrida con la energía combinada del balón y
+ *     de la carrera del jugador (clave para empujar un pase al arco o
+ *     despejar en defensa).
+ *   - PIERNAS (0.35 < t < 0.7): rebote de fuerza media.
+ *   - TORSO (t < 0.35): absorbe la energía — el balón muere casi ahí.
+ *
+ * Devuelve true si hubo contacto.
  */
 export function collideBallWithSlidingBody(ball, player) {
   const sin = Math.sin(player.yaw);
@@ -99,6 +108,7 @@ export function collideBallWithSlidingBody(ball, player) {
   const bz = player.pos.z + cos * 1.15;
 
   // Punto más cercano del segmento [a,b] al centro del balón.
+  // t = 0 -> torso/cadera, t = 1 -> punta del pie extendido.
   const abx = bx - ax;
   const abz = bz - az;
   const lenSq = abx * abx + abz * abz;
@@ -122,12 +132,44 @@ export function collideBallWithSlidingBody(ball, player) {
   ball.pos.x += nx * push;
   ball.pos.y += ny * push;
   ball.pos.z += nz * push;
-  const vn = ball.vel.x * nx + ball.vel.y * ny + ball.vel.z * nz;
-  if (vn < 0) {
-    const rest = 0.45;
-    ball.vel.x -= (1 + rest) * vn * nx;
-    ball.vel.y -= (1 + rest) * vn * ny;
-    ball.vel.z -= (1 + rest) * vn * nz;
+
+  // Velocidades involucradas: la del balón y la de la carrera del jugador.
+  const pvx = player.vel?.x ?? 0;
+  const pvz = player.vel?.z ?? 0;
+  const playerSpeed = Math.hypot(pvx, pvz);
+  const ballSpeed = Math.hypot(ball.vel.x, ball.vel.z);
+
+  if (t > 0.7) {
+    // PUNTA: despeje frontal en la dirección de la barrida.
+    const out = ballSpeed * 0.5 + playerSpeed * 1.1 + 1.5;
+    ball.vel.x = sin * out;
+    ball.vel.z = cos * out;
+    ball.vel.y = Math.min(2.5, out * 0.15);
+  } else if (t < 0.35) {
+    // TORSO: absorción — mata casi toda la energía del balón y apenas
+    // lo arrastra con el envión del cuerpo.
+    ball.vel.x = ball.vel.x * 0.15 + pvx * 0.3;
+    ball.vel.z = ball.vel.z * 0.15 + pvz * 0.3;
+    ball.vel.y = Math.abs(ball.vel.y) * 0.2;
+  } else {
+    // PIERNAS: rebote de fuerza media + parte del envión del jugador.
+    const vn = ball.vel.x * nx + ball.vel.y * ny + ball.vel.z * nz;
+    if (vn < 0) {
+      const rest = 0.45;
+      ball.vel.x -= (1 + rest) * vn * nx;
+      ball.vel.y -= (1 + rest) * vn * ny;
+      ball.vel.z -= (1 + rest) * vn * nz;
+    }
+    ball.vel.x += pvx * 0.35;
+    ball.vel.z += pvz * 0.35;
+  }
+
+  // Nunca dejar componente de velocidad hacia adentro del cuerpo.
+  const vnOut = ball.vel.x * nx + ball.vel.y * ny + ball.vel.z * nz;
+  if (vnOut < 0) {
+    ball.vel.x -= vnOut * nx;
+    ball.vel.y -= vnOut * ny;
+    ball.vel.z -= vnOut * nz;
   }
   return true;
 }

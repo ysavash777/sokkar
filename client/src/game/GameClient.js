@@ -41,6 +41,7 @@ export class GameClient {
       slideUntil: 0,
       slideDir: 0,
       slideCdUntil: 0,
+      curSpeed: 0, // velocidad real (con inercia); nunca se muestra en el HUD
     };
     this.ballOwnerId = null;
     this.sendAccumulator = 0;
@@ -137,7 +138,7 @@ export class GameClient {
 
   addCharacter(p) {
     if (this.characters.has(p.id)) return;
-    const ch = new SteveCharacter(p.team, p.nickname);
+    const ch = new SteveCharacter(p.team, p.nickname, p.skin);
     this.characters.set(p.id, ch);
     this.nicknames.set(p.id, p.nickname);
     this.scene.add(ch.group);
@@ -229,14 +230,15 @@ export class GameClient {
     // ---- movimiento
     let moveX = 0;
     let moveZ = 0;
-    let speed = 0;
+    let targetSpeed = 0;
     let axisPresent = false;
     const shiftHeld = this.input.sprint;
 
     if (sliding) {
-      // La barrida es un lunge sin control de dirección.
+      // La barrida es un lunge sin control de dirección (velocidad propia,
+      // sin pasar por la aceleración de trote/sprint).
       const t = (L.slideUntil - now) / ACTIONS.SLIDE_DURATION_MS;
-      speed = ACTIONS.SLIDE_SPEED * t;
+      L.curSpeed = ACTIONS.SLIDE_SPEED * t;
       moveX = Math.sin(L.slideDir);
       moveZ = Math.cos(L.slideDir);
     } else if (!stunned) {
@@ -258,18 +260,32 @@ export class GameClient {
         const nz = axis.z / len;
         moveX = -nx * Math.cos(camYaw) + nz * Math.sin(camYaw);
         moveZ = nx * Math.sin(camYaw) + nz * Math.cos(camYaw);
-        speed = wantsSprint ? PLAYER.SPRINT_SPEED : PLAYER.WALK_SPEED;
+        targetSpeed = wantsSprint ? PLAYER.SPRINT_SPEED : PLAYER.WALK_SPEED;
 
         // Correr de espaldas es más lento: cuanto más apunta el movimiento
         // contra el frente del cuerpo (cámara), más se reduce la velocidad.
         const backDot = moveX * Math.sin(camYaw) + moveZ * Math.cos(camYaw);
-        if (backDot < 0) speed *= 1 + backDot * (1 - PLAYER.BACKPEDAL_MULT);
+        if (backDot < 0) targetSpeed *= 1 + backDot * (1 - PLAYER.BACKPEDAL_MULT);
 
         // Estilo strafe: el cuerpo mantiene el frente hacia la cámara;
         // moverse al costado es un desplazamiento lateral, no un giro.
         L.yaw = lerpAngle(L.yaw, camYaw, 1 - Math.exp(-14 * dt));
       }
+
+      // Aceleración/desaceleración: la velocidad real (curSpeed, nunca
+      // expuesta en el HUD) persigue el objetivo en vez de saltar a él —
+      // el trote reacciona rápido, el sprint tarda más en estirarse, y al
+      // soltar/frenar hay una breve inercia de desaceleración.
+      const accel = L.sprinting ? PLAYER.ACCEL_SPRINT : PLAYER.ACCEL_JOG;
+      const rate = targetSpeed > L.curSpeed ? accel : PLAYER.DECEL;
+      const diff = targetSpeed - L.curSpeed;
+      const maxDelta = rate * dt;
+      L.curSpeed += Math.sign(diff) * Math.min(Math.abs(diff), maxDelta);
+    } else {
+      // Aturdido: sin control, pero igual frena con inercia hasta 0.
+      L.curSpeed = Math.max(0, L.curSpeed - PLAYER.DECEL * dt);
     }
+    const speed = L.curSpeed;
 
     // Stamina: drena solo al sprintar de verdad. NO recarga mientras Shift
     // siga presionado (aunque ya no se pueda sprintar) — hay que soltarlo.
