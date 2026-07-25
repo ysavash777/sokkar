@@ -16,7 +16,8 @@ sokkaio/
 │   └── constants.js         # Única fuente de verdad de gameplay/física (ESM,
 │                            #   importado por el server y servido al browser)
 ├── client/assets/
-│   └── steve.gltf           # Modelo del personaje (Blockbench), buffers/textura embebidos
+│   ├── steve.gltf           # Modelo del personaje (Blockbench, con skinning)
+│   └── skins/               # Texturas de skin: <nombre>.png = nombre de la skin en juego
 ├── server/
 │   ├── index.js             # Express (estáticos + healthcheck) + Socket.IO
 │   └── game/
@@ -72,27 +73,29 @@ Servidor ──(eventos: goal / foul / steal / …)────▶ Todos
 
 ## Decisiones de gameplay
 
-### Personaje "Steve" (modelo glTF de Blockbench)
+### Personaje "Steve" (modelo glTF de Blockbench, con skinning)
 
-`SteveCharacter` carga `client/assets/steve.gltf` (exportado de Blockbench)
-con `GLTFLoader`, en vez de armar la geometría a mano. El rig trae cabeza,
-torso, 2 brazos y 2 piernas como nodos independientes con pivote propio en
-cada articulación — **no es un bloque envolvente único**: el servidor
-replica esa misma silueta con una cápsula por extremidad
-(`server/game/physics.js → LIMB_CAPSULES`), de modo que el balón solo
-rebota donde visualmente hay cuerpo, nunca en "aire".
+`SteveCharacter` carga `client/assets/steve.gltf` (exportado de Blockbench
+en pose neutral) con `GLTFLoader`. El export trae **skinning**: los meshes
+son `SkinnedMesh` y cada parte (Head, Body, Right/Left Arm, Right/Left Leg)
+es un **hueso** con el pivote en su articulación — **no es un bloque
+envolvente único**: el servidor replica esa silueta con una cápsula por
+extremidad (`server/game/physics.js → LIMB_CAPSULES`), de modo que el balón
+solo interactúa donde visualmente hay cuerpo.
 
-La carga es asíncrona: el modelo se descarga y clona una sola vez (template
-compartido a nivel de módulo), y cada `SteveCharacter` clona esa jerarquía
-liviana reutilizando geometrías. El material (textura del skin) también se
-clona una única vez **por equipo**, tintado hacia el color del equipo
-(`TEAM_COLORS`), no por jugador — evita crear materiales de más.
+La carga es asíncrona: el modelo se descarga una sola vez (template a nivel
+de módulo) y cada instancia se clona con **`SkeletonUtils.clone`** — un
+`Object3D.clone` normal no rebindea el esqueleto y el modelo renderiza
+descolocado. El material se crea una única vez **por equipo**, tintado
+hacia `TEAM_COLORS`.
+
+**Skins por archivo**: la textura no se toma del glTF sino de
+`client/assets/skins/<nombre>.png` — el nombre del archivo es el nombre de
+la skin en juego; para agregar skins basta soltar más PNGs en esa carpeta.
 
 La animación procedural (caminata, patada, cruzar pie, barrida, aturdido)
-ya no fija `rotation.x` directo: cada pivote guarda su pose base (quaternion
-+ posición) tal como la esculpió Blockbench, y cada frame se le compone una
-rotación adicional sobre el eje X local (`poseLimb()`), preservando la pose
-natural del rig en vez de pisarla.
+rota los huesos componiendo sobre su pose base (quaternion tal como lo
+esculpió Blockbench) una rotación extra en el eje X local (`poseLimb()`).
 
 > Nota técnica: `GLTFLoader` decodifica texturas con `createImageBitmap`,
 > que en algunos entornos falla para PNGs embebidos en base64. Por eso la
@@ -164,16 +167,19 @@ en ~5 s. Bajo el 10 % no se puede sprintar (evita spam de micro-sprints).
 
 ### Cruzar pie (clic ruedita) y barrida (clic derecho)
 
-Ambos comparten la misma regla, resuelta **en el servidor** durante la
-ventana activa de la acción:
+Ambos se resuelven **en el servidor** durante la ventana activa de la
+acción, con prioridad pelota → rival:
 
-1. Se proyecta el punto del pie extendido: `pos + forward * reach`
-   (1.0 m cruzar pie, 1.45 m barrida).
-2. **Si conecta primero con la pelota** (radio 0.62 m) → robo limpio
-   (cruzar pie retiene; la barrida despeja hacia adelante).
-3. **Si conecta con pierna/pie de un rival sin haber tocado la pelota**
-   (radio 0.48 m) → **falta**: el infractor queda aturdido 3 s y la víctima
-   retiene/recibe el balón.
+- **Cruzar pie** (SIN cooldown, spameable o cronometrado): si la pelota
+  está dentro del **área de control circular** alrededor del jugador
+  (`CONTROL_AREA_RADIUS`, cualquier ángulo) → la controla/roba. El cliente
+  dibuja ese círculo bajo los pies del jugador local. La falta se evalúa
+  con el pie extendido hacia adelante (`EXTEND_REACH` + `FOUL_RADIUS`).
+- **Barrida** (con cooldown): si el pie del lunge alcanza la pelota
+  (radio `STEAL_RADIUS`) → **queda pegada** a quien barrió. Si en cambio
+  contacta al rival — con el pie o con el **cuerpo** deslizándose
+  (`SLIDE_BODY_FOUL_RADIUS`) — es **falta**.
+- Toda falta aturde al infractor 3 s y la víctima retiene/recibe el balón.
 
 ## Optimización (anti-lag)
 

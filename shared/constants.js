@@ -19,14 +19,14 @@ export const BALL = {
   GROUND_RESTITUTION: 0.55,
   ROLL_FRICTION: 0.6, // frenado por segundo (factor exponencial)
   AIR_DRAG: 0.12,
-  MAX_SPEED: 36,
+  MAX_SPEED: 44,
 };
 
 export const PLAYER = {
   HEIGHT: 1.8,
   RADIUS: 0.35,
-  WALK_SPEED: 4.3,
-  SPRINT_SPEED: 7.2,
+  WALK_SPEED: 5.2,
+  SPRINT_SPEED: 8.6,
   JUMP_SPEED: 7.5,
   GRAVITY: 20,
   // Stamina: se agota sprintando; NO recarga mientras Shift esté presionado
@@ -52,26 +52,29 @@ export const ACTIONS = {
   // Remate cargado: mantener clic izq llena la barra (SIN cooldown).
   // Curva de potencia no lineal: un toque suelto apenas empuja el balón
   // ~1 m; solo cerca de la barra llena el remate se vuelve muy fuerte.
-  KICK_POWER: 34,
-  KICK_LIFT: 7,
+  KICK_POWER: 40,
+  KICK_LIFT: 8,
   KICK_RANGE: 1.5,
   KICK_MIN_POWER: 0.03,
   KICK_CURVE: 1.8,
   KICK_CHARGE_TIME_MS: 900,
   RECAPTURE_DELAY_MS: 450, // quien patea no re-captura su propio pase al instante
 
-  // Cruzar pie (clic ruedita): extensión defensiva corta. También es la
-  // única forma de "recibir" un balón libre (si no se usa, la pelota
-  // pasa entre las piernas sin colisión).
-  EXTEND_REACH: 1.0,
+  // Cruzar pie (clic ruedita): SIN cooldown — se puede spamear o cronometrar.
+  // Controla/roba el balón si está dentro del área de control circular
+  // alrededor del jugador (cualquier ángulo). Es la única forma de "recibir"
+  // un balón libre (si no se usa, la pelota pasa entre las piernas).
+  EXTEND_REACH: 1.0, // usado solo para la falta (pie extendido hacia el rival)
   EXTEND_DURATION_MS: 350,
-  EXTEND_COOLDOWN_MS: 900,
+  CONTROL_AREA_RADIUS: 0.9, // círculo en la base del jugador (el personaje cabe en él)
 
-  // Barrida (clic derecho): mismo criterio robo/falta pero con lunge.
+  // Barrida (clic derecho): si toca el balón, se lo queda pegado;
+  // si contacta al rival, es falta.
   SLIDE_REACH: 1.45,
   SLIDE_DURATION_MS: 650,
-  SLIDE_SPEED: 9,
+  SLIDE_SPEED: 10.5,
   SLIDE_COOLDOWN_MS: 2200,
+  SLIDE_BODY_FOUL_RADIUS: 0.7, // contacto de cuerpo durante la barrida
 
   STEAL_RADIUS: 0.62, // el pie debe conectar realmente con la pelota
   FOUL_RADIUS: 0.48, // radio de las piernas del rival para cobrar falta

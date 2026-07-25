@@ -150,12 +150,19 @@ export class GameRoom {
     if (!p) return;
     const now = Date.now();
     const type = data?.type === 'slide' ? 'slide' : 'extend';
-    if (now < p.stunnedUntil || now < p.challengeCooldownUntil || p.challenge) return;
+    if (now < p.stunnedUntil) return;
 
-    const duration = type === 'slide' ? ACTIONS.SLIDE_DURATION_MS : ACTIONS.EXTEND_DURATION_MS;
-    const cooldown = type === 'slide' ? ACTIONS.SLIDE_COOLDOWN_MS : ACTIONS.EXTEND_COOLDOWN_MS;
-    p.challenge = { type, until: now + duration, resolved: false };
-    p.challengeCooldownUntil = now + cooldown;
+    if (type === 'slide') {
+      if (now < p.challengeCooldownUntil || p.challenge) return;
+      p.challenge = { type, until: now + ACTIONS.SLIDE_DURATION_MS, resolved: false };
+      p.challengeCooldownUntil = now + ACTIONS.SLIDE_COOLDOWN_MS;
+      return;
+    }
+
+    // Cruzar pie: SIN cooldown — se puede spamear o cronometrar el toque.
+    // Un nuevo clic reinicia la ventana activa.
+    if (p.challenge?.type === 'slide') return; // no mezclar con una barrida en curso
+    p.challenge = { type: 'extend', until: now + ACTIONS.EXTEND_DURATION_MS, resolved: false };
   }
 
   // ---------------------------------------------------------------- tick
@@ -283,8 +290,12 @@ export class GameRoom {
 
   /**
    * Regla de cruzar pie / barrida:
-   *  1) Si el pie extendido conecta con la PELOTA -> robo limpio.
-   *  2) Si en cambio conecta con pie/pierna del RIVAL -> falta.
+   *  1) Si conecta con la PELOTA -> se la queda pegada (control/robo).
+   *     - Cruzar pie: la pelota debe estar dentro del área de control
+   *       circular alrededor del jugador (cualquier ángulo).
+   *     - Barrida: el pie del lunge debe alcanzarla; también queda pegada.
+   *  2) Si en cambio conecta con el RIVAL -> falta (en la barrida cuenta
+   *     también el contacto de cuerpo, no solo el pie).
    */
   resolveChallenge(p, now) {
     const c = p.challenge;
@@ -294,30 +305,28 @@ export class GameRoom {
     const ball = this.ball;
 
     // 1) ¿Conecta con la pelota?
-    const bdx = ball.pos.x - footX;
-    const bdz = ball.pos.z - footZ;
-    if (
-      ball.pos.y < 0.9 &&
-      bdx * bdx + bdz * bdz < ACTIONS.STEAL_RADIUS * ACTIONS.STEAL_RADIUS &&
-      ball.ownerId !== p.id
-    ) {
+    let touchesBall = false;
+    if (ball.pos.y < 0.9 && ball.ownerId !== p.id) {
+      if (c.type === 'extend') {
+        // Área de control circular centrada en el jugador (360°).
+        const dx = ball.pos.x - p.pos.x;
+        const dz = ball.pos.z - p.pos.z;
+        touchesBall = dx * dx + dz * dz < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS;
+      } else {
+        const bdx = ball.pos.x - footX;
+        const bdz = ball.pos.z - footZ;
+        touchesBall = bdx * bdx + bdz * bdz < ACTIONS.STEAL_RADIUS * ACTIONS.STEAL_RADIUS;
+      }
+    }
+    if (touchesBall) {
       const prevOwner = this.players.get(ball.ownerId);
-      const now2 = Date.now();
       c.resolved = true;
       // El rival despojado no puede re-capturar al instante: el robo debe "quedarse".
-      if (prevOwner) prevOwner.captureLockUntil = now2 + 1000;
-      if (c.type === 'slide') {
-        // La barrida despeja el balón hacia adelante.
-        ball.ownerId = null;
-        ball.vel.x = Math.sin(p.yaw) * 7;
-        ball.vel.z = Math.cos(p.yaw) * 7;
-        ball.vel.y = 1.5;
-        p.captureLockUntil = now2 + 400;
-      } else {
-        ball.ownerId = p.id;
-        ball.capturedAt = now2;
-        this.io.emit('possession', { id: p.id });
-      }
+      if (prevOwner) prevOwner.captureLockUntil = now + 1000;
+      // Tanto cruzar pie como barrida dejan la pelota pegada a quien la tocó.
+      ball.ownerId = p.id;
+      ball.capturedAt = now;
+      this.io.emit('possession', { id: p.id });
       this.io.emit('steal', {
         by: p.id,
         from: prevOwner ? prevOwner.id : null,
@@ -326,30 +335,40 @@ export class GameRoom {
       return;
     }
 
-    // 2) ¿Conecta con la pierna/pie de un rival (sin haber tocado la pelota)?
+    // 2) ¿Conecta con un rival (sin haber tocado la pelota)?
     for (const rival of this.players.values()) {
       if (rival.team === p.team || rival.id === p.id) continue;
-      const dx = rival.pos.x - footX;
-      const dz = rival.pos.z - footZ;
-      const legRadius = ACTIONS.FOUL_RADIUS;
-      if (dx * dx + dz * dz < legRadius * legRadius && rival.pos.y < 0.6) {
-        c.resolved = true;
-        p.stunnedUntil = now + ACTIONS.FOUL_STUN_MS;
-        p.challenge = null;
-        // Si la víctima tenía el balón, lo conserva; si era libre, se lo queda.
-        if (!this.ball.ownerId || this.ball.ownerId === p.id) {
-          this.ball.ownerId = rival.id;
-          this.ball.capturedAt = now;
-          this.io.emit('possession', { id: rival.id });
-        }
-        this.io.emit('foul', {
-          offender: p.id,
-          victim: rival.id,
-          type: c.type,
-          stunMs: ACTIONS.FOUL_STUN_MS,
-        });
-        return;
+      if (rival.pos.y >= 0.6) continue;
+
+      // Pie extendido / pie del lunge.
+      const fdx = rival.pos.x - footX;
+      const fdz = rival.pos.z - footZ;
+      let contact = fdx * fdx + fdz * fdz < ACTIONS.FOUL_RADIUS * ACTIONS.FOUL_RADIUS;
+
+      // En la barrida el CUERPO deslizándose también comete falta.
+      if (!contact && c.type === 'slide') {
+        const bdx = rival.pos.x - p.pos.x;
+        const bdz = rival.pos.z - p.pos.z;
+        contact = bdx * bdx + bdz * bdz < ACTIONS.SLIDE_BODY_FOUL_RADIUS * ACTIONS.SLIDE_BODY_FOUL_RADIUS;
       }
+      if (!contact) continue;
+
+      c.resolved = true;
+      p.stunnedUntil = now + ACTIONS.FOUL_STUN_MS;
+      p.challenge = null;
+      // Si la víctima tenía el balón, lo conserva; si era libre, se lo queda.
+      if (!this.ball.ownerId || this.ball.ownerId === p.id) {
+        this.ball.ownerId = rival.id;
+        this.ball.capturedAt = now;
+        this.io.emit('possession', { id: rival.id });
+      }
+      this.io.emit('foul', {
+        offender: p.id,
+        victim: rival.id,
+        type: c.type,
+        stunMs: ACTIONS.FOUL_STUN_MS,
+      });
+      return;
     }
   }
 

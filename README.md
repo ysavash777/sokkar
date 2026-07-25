@@ -14,13 +14,15 @@ Entrás con un nickname y ya estás en la partida.
 | `Shift` | Sprint (stamina, recarga completa en ~5 s) |
 | `Espacio` | Salto |
 | `Clic izquierdo (mantener)` | Cargar remate: barra de poder + línea de dirección según la cámara; se dispara al soltar (sin cooldown) |
-| `Clic ruedita` | Cruzar pie — también es la forma de **recibir/controlar** un balón libre |
+| `Clic ruedita` | Cruzar pie (sin cooldown) — controla/roba el balón dentro del círculo bajo tus pies, en cualquier ángulo |
 | `Clic derecho` | Barrida |
 
-> Cruzar pie y barrida: si el pie conecta con la **pelota**, la robás (o la
-> controlás, si estaba libre). Si conecta con la **pierna del rival**, es
-> **falta** (3 s aturdido). El balón libre no se pega solo: si no cruzás
-> el pie, te atraviesa como si pasara entre las piernas.
+> Cruzar pie: si la pelota está dentro del **círculo de control** que ves
+> en la base de tu personaje, te la quedás — podés spamear el botón o
+> tocarlo justo cuando llega. Barrida: si tocás la **pelota**, queda
+> pegada a tus pies; si contactás al **rival** (pie o cuerpo), es **falta**
+> (3 s aturdido). El balón libre no se pega solo: si no cruzás el pie, te
+> atraviesa como si pasara entre las piernas.
 >
 > Si el balón toca tu **brazo** (entre hombro y mano) en cualquier
 > momento —salto, barrida, lo que sea— es **mano**: falta automática.

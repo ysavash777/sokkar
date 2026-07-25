@@ -1,19 +1,27 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/loaders/GLTFLoader.js';
+import { clone as skeletonClone } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/utils/SkeletonUtils.js';
 import { ANIM, TEAM_COLORS } from '/shared/constants.js';
 
 /**
  * Personaje "Steve" cargado desde un modelo .gltf hecho en Blockbench
- * (client/assets/steve.gltf), en vez de geometría armada a mano.
- * El rig trae 3 nodos raíz (Waist con cabeza/torso/brazos, y las dos
- * piernas como hermanos) con pivotes ya orientados por Blockbench en
- * cada articulación — los animamos aplicando una rotación adicional
- * sobre la pose base (quaternion) de cada pivote.
+ * (client/assets/steve.gltf, pose neutral), en vez de geometría a mano.
+ * El export viene CON SKINNING: los meshes son SkinnedMesh y cada parte
+ * (Head, Body, Right/Left Arm, Right/Left Leg) es un HUESO con pivote en
+ * su articulación — la animación procedural rota esos huesos. Por eso las
+ * instancias se clonan con SkeletonUtils.clone (un Object3D.clone normal
+ * no rebindea el esqueleto y el modelo renderiza descolocado).
+ *
+ * Skins: la textura NO se toma del glTF sino de /assets/skins/<nombre>.png
+ * — el nombre del archivo es el nombre de la skin en juego, con lo cual
+ * basta soltar más PNGs en esa carpeta para agregar skins.
  */
 const MODEL_URL = '/assets/steve.gltf';
+const DEFAULT_SKIN = 'steve';
 const MODEL_SCALE = 0.9; // el rig mide ~2 unidades de alto -> ~1.8 (PLAYER.HEIGHT)
-// La cara del modelo (ojos) quedó pintada mirando hacia -Z local, pero el
+// La cara del modelo (ojos) está pintada mirando hacia -Z local, pero el
 // juego usa +Z como "adelante" (yaw=0) — se corrige con un giro de 180°.
+// (Verificado mapeando la región UV de la cara frontal contra las normales.)
 const FRONT_ROTATION_Y = Math.PI;
 
 // Un solo material tintado por equipo, compartido entre todas las instancias
@@ -23,25 +31,21 @@ let teamMaterials = null;
 
 function loadTemplate() {
   if (!templatePromise) {
-    // GLTFLoader decodifica texturas con createImageBitmap, que en algunos
-    // entornos falla para PNGs embebidos en base64 ("Couldn't load texture").
-    // Cargamos la imagen aparte con TextureLoader (basado en <img>, más
-    // compatible) y la reasignamos al material una vez lista.
-    const texPromise = fetch(MODEL_URL)
-      .then((r) => r.json())
-      .then((data) => {
-        const uri = data.images?.[0]?.uri;
-        if (!uri) return null;
-        return new THREE.TextureLoader().loadAsync(uri).then((tex) => {
-          tex.flipY = false; // convención glTF (UV con origen arriba-izquierda)
-          tex.colorSpace = THREE.SRGBColorSpace;
-          tex.magFilter = THREE.NearestFilter;
-          tex.minFilter = THREE.NearestFilter;
-          tex.wrapS = THREE.ClampToEdgeWrapping;
-          tex.wrapT = THREE.ClampToEdgeWrapping;
-          return tex;
-        });
-      });
+    // La textura se carga desde la carpeta de skins con TextureLoader
+    // (GLTFLoader usa createImageBitmap para el PNG embebido, que falla en
+    // algunos entornos; además así las skins son intercambiables por archivo).
+    const texPromise = new THREE.TextureLoader()
+      .loadAsync(`/assets/skins/${DEFAULT_SKIN}.png`)
+      .then((tex) => {
+        tex.flipY = false; // convención glTF (UV con origen arriba-izquierda)
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.NearestFilter;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        return tex;
+      })
+      .catch(() => null);
 
     templatePromise = Promise.all([new GLTFLoader().loadAsync(MODEL_URL), texPromise]).then(
       ([gltf, texture]) => {
@@ -88,7 +92,8 @@ export class SteveCharacter {
   }
 
   _build(template) {
-    const clone = template.clone(true);
+    // SkeletonUtils.clone: rebindea los SkinnedMesh al esqueleto clonado.
+    const clone = skeletonClone(template);
     const mat = teamMaterials[this.team];
     clone.traverse((o) => {
       if (o.isMesh) {
@@ -105,12 +110,20 @@ export class SteveCharacter {
     this.body.rotation.y = FRONT_ROTATION_Y;
     this.group.add(this.body);
 
-    // GLTFLoader sanitiza los nombres: espacios -> "_" y sufijo "_1" en
-    // los hijos que colisionan con el nombre del contenedor pivote.
-    this.armL = this.body.getObjectByName('Left_Arm');
-    this.armR = this.body.getObjectByName('Right_Arm');
-    this.legL = this.body.getObjectByName('Left_Leg');
-    this.legR = this.body.getObjectByName('Right_Leg');
+    // Las extremidades son HUESOS del esqueleto, con el pivote en la
+    // articulación (GLTFLoader sanitiza nombres: espacios -> "_" y puede
+    // sufijar duplicados, por eso se busca por prefijo entre los Bones).
+    const findBone = (prefix) => {
+      let found = null;
+      this.body.traverse((o) => {
+        if (!found && o.isBone && o.name.startsWith(prefix)) found = o;
+      });
+      return found;
+    };
+    this.legL = findBone('Left_Leg');
+    this.legR = findBone('Right_Leg');
+    this.armL = findBone('Left_Arm');
+    this.armR = findBone('Right_Arm');
 
     for (const n of [this.armL, this.armR, this.legL, this.legR]) {
       if (!n) continue;

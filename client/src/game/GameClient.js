@@ -40,7 +40,6 @@ export class GameClient {
       actionUntil: 0, // fin de la pose de kick/extend
       slideUntil: 0,
       slideDir: 0,
-      extendCdUntil: 0,
       slideCdUntil: 0,
     };
     this.ballOwnerId = null;
@@ -61,6 +60,17 @@ export class GameClient {
     );
     this.aimLine.visible = false;
     this.scene.add(this.aimLine);
+
+    // Círculo en la base del jugador local: indica el área donde cruzar pie
+    // puede controlar/robar el balón (el personaje cabe dentro de él).
+    const ringGeo = new THREE.RingGeometry(ACTIONS.CONTROL_AREA_RADIUS - 0.06, ACTIONS.CONTROL_AREA_RADIUS, 40);
+    ringGeo.rotateX(-Math.PI / 2);
+    this.controlRing = new THREE.Mesh(
+      ringGeo,
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 }),
+    );
+    this.controlRing.visible = false;
+    this.scene.add(this.controlRing);
 
     this.bindNetEvents();
   }
@@ -181,11 +191,11 @@ export class GameClient {
         L.yaw = this.cameraCtrl.yaw;
         this.kickCharge = 0;
       }
-      if (this.input.consume('extend') && now > L.extendCdUntil) {
+      // Cruzar pie: SIN cooldown — spameable o cronometrado al llegar la pelota.
+      if (this.input.consume('extend')) {
         this.net.sendChallenge('extend');
         L.anim = ANIM.EXTEND;
         L.actionUntil = now + ACTIONS.EXTEND_DURATION_MS;
-        L.extendCdUntil = now + ACTIONS.EXTEND_COOLDOWN_MS;
       }
       if (this.input.consume('slide') && now > L.slideCdUntil && L.onGround) {
         this.net.sendChallenge('slide');
@@ -292,6 +302,10 @@ export class GameClient {
     } else if (!L.onGround) L.anim = ANIM.JUMP;
     else if (speed > 0) L.anim = L.sprinting ? ANIM.SPRINT : ANIM.JOG;
     else L.anim = ANIM.IDLE;
+
+    // Círculo del área de control, siempre bajo los pies del jugador local.
+    this.controlRing.visible = true;
+    this.controlRing.position.set(L.pos.x, 0.02, L.pos.z);
 
     // Aplicar al mesh propio.
     const ch = this.characters.get(this.myId);
