@@ -175,11 +175,33 @@ acción, con prioridad pelota → rival:
   (`CONTROL_AREA_RADIUS`, cualquier ángulo) → la controla/roba. El cliente
   dibuja ese círculo bajo los pies del jugador local. La falta se evalúa
   con el pie extendido hacia adelante (`EXTEND_REACH` + `FOUL_RADIUS`).
-- **Barrida** (con cooldown): si el pie del lunge alcanza la pelota
-  (radio `STEAL_RADIUS`) → **queda pegada** a quien barrió. Si en cambio
-  contacta al rival — con el pie o con el **cuerpo** deslizándose
-  (`SLIDE_BODY_FOUL_RADIUS`) — es **falta**.
+- **Barrida** (con cooldown): **no controla el balón**. Si el pie del
+  lunge conecta con una pelota controlada por el rival (`STEAL_RADIUS`)
+  → solo lo **despoja** (balón suelto con un empujón corto). Si contacta
+  al rival — pie o **cuerpo** deslizándose (`SLIDE_BODY_FOUL_RADIUS`) —
+  es **falta**. Además, mientras dura la barrida, el cuerpo tendido es
+  **sólido para el balón libre**: una cápsula horizontal de cadera a pie
+  (`collideBallWithSlidingBody`) lo hace rebotar venga de frente, de
+  costado o por encima.
 - Toda falta aturde al infractor 3 s y la víctima retiene/recibe el balón.
+
+### Remate: origen y potencia por tramos
+
+El balón sale **siempre desde adelante del pateador, en su último punto**:
+el cliente envía su posición junto al kick (validada contra teleports) y
+el servidor recoloca el balón en `pos + forward * DIST_JOG` antes de
+aplicar el impulso — sin esto, al patear en sprint el balón salía ~2 pasos
+atrás por el lag del snapshot. La potencia es por tramos: toque suelto
+→ el balón se adelanta ~1 m; media barra → ~2 m; de media a llena escala
+con `KICK_CURVE` hasta `KICK_POWER` (remate real).
+
+### Colisiones del balón conducido y confinamiento
+
+Mientras se conduce, el balón respeta bandas, fondos y la red del arco
+(`clampToPitch`, replicado en la predicción del cliente). Los jugadores
+están **confinados a la cancha** (clamps de cliente y servidor), así que
+no se puede rodear el arco y meter el balón "desde afuera"; conducir el
+balón cruzando la línea de gol de frente sigue siendo gol.
 
 ## Optimización (anti-lag)
 

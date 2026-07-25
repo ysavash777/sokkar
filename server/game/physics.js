@@ -83,6 +83,56 @@ export function collideBallWithArms(ball, player) {
 }
 
 /**
+ * Colisión balón vs. el CUERPO ENTERO de un jugador barriéndose: una
+ * cápsula horizontal a ras de piso desde la cadera hasta el pie extendido.
+ * El balón rebota contra ella venga del frente, del costado o por encima
+ * (no atraviesa el torso tendido). Devuelve true si hubo contacto.
+ */
+export function collideBallWithSlidingBody(ball, player) {
+  const sin = Math.sin(player.yaw);
+  const cos = Math.cos(player.yaw);
+  const r = 0.32; // radio del cuerpo tendido
+  const y = 0.28; // altura del eje del cuerpo sobre el piso
+  const ax = player.pos.x + sin * 0.05;
+  const az = player.pos.z + cos * 0.05;
+  const bx = player.pos.x + sin * 1.15;
+  const bz = player.pos.z + cos * 1.15;
+
+  // Punto más cercano del segmento [a,b] al centro del balón.
+  const abx = bx - ax;
+  const abz = bz - az;
+  const lenSq = abx * abx + abz * abz;
+  let t = ((ball.pos.x - ax) * abx + (ball.pos.z - az) * abz) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + abx * t;
+  const cz = az + abz * t;
+
+  const dx = ball.pos.x - cx;
+  const dy = ball.pos.y - y;
+  const dz = ball.pos.z - cz;
+  const distSq = dx * dx + dy * dy + dz * dz;
+  const minDist = BALL.RADIUS + r;
+  if (distSq >= minDist * minDist || distSq < 1e-6) return false;
+
+  const dist = Math.sqrt(distSq);
+  const nx = dx / dist;
+  const ny = dy / dist;
+  const nz = dz / dist;
+  const push = minDist - dist;
+  ball.pos.x += nx * push;
+  ball.pos.y += ny * push;
+  ball.pos.z += nz * push;
+  const vn = ball.vel.x * nx + ball.vel.y * ny + ball.vel.z * nz;
+  if (vn < 0) {
+    const rest = 0.45;
+    ball.vel.x -= (1 + rest) * vn * nx;
+    ball.vel.y -= (1 + rest) * vn * ny;
+    ball.vel.z -= (1 + rest) * vn * nz;
+  }
+  return true;
+}
+
+/**
  * Detecta si el balón cruzó por completo la línea de gol (dentro del
  * ancho/alto del arco). No integra física, solo evalúa la posición.
  * Se usa tanto para el balón libre como para el balón conducido a los pies.
@@ -95,14 +145,22 @@ export function checkGoalCrossing(ball) {
   return 0;
 }
 
-/** Recorta la posición del balón para que no atraviese bandas/fondos (sin rebote). */
+/**
+ * Recorta la posición del balón para que no atraviese bandas, fondos ni
+ * la red del arco (sin rebote). Dentro de la boca del arco permite avanzar
+ * hasta el fondo de la red; fuera de ella, la línea de fondo es pared.
+ */
 export function clampToPitch(ball) {
   if (Math.abs(ball.pos.z) > HALF_W - BALL.RADIUS) {
     ball.pos.z = Math.sign(ball.pos.z) * (HALF_W - BALL.RADIUS);
   }
   const inGoalMouth = Math.abs(ball.pos.z) < FIELD.GOAL_WIDTH / 2;
-  if (!inGoalMouth && Math.abs(ball.pos.x) > HALF_L - BALL.RADIUS) {
-    ball.pos.x = Math.sign(ball.pos.x) * (HALF_L - BALL.RADIUS);
+  if (!inGoalMouth) {
+    if (Math.abs(ball.pos.x) > HALF_L - BALL.RADIUS) {
+      ball.pos.x = Math.sign(ball.pos.x) * (HALF_L - BALL.RADIUS);
+    }
+  } else if (Math.abs(ball.pos.x) > HALF_L + FIELD.GOAL_DEPTH - BALL.RADIUS) {
+    ball.pos.x = Math.sign(ball.pos.x) * (HALF_L + FIELD.GOAL_DEPTH - BALL.RADIUS);
   }
 }
 

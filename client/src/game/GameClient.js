@@ -180,11 +180,10 @@ export class GameClient {
         this.kickCharge = Math.min(1, this.kickCharge + (dt * 1000) / ACTIONS.KICK_CHARGE_TIME_MS);
       }
       if (this.input.consume('kickRelease')) {
-        // Curva no lineal: un toque suelto empuja apenas el balón (~1 m);
-        // recién cerca de la barra llena el remate se vuelve muy fuerte.
-        const curved = Math.pow(this.kickCharge, ACTIONS.KICK_CURVE);
-        const power = ACTIONS.KICK_MIN_POWER + (1 - ACTIONS.KICK_MIN_POWER) * curved;
-        this.net.sendKick(this.cameraCtrl.yaw, power);
+        // Se envía la carga cruda (0..1) y la posición actual: el servidor
+        // aplica la curva por tramos y hace salir el balón desde ADELANTE
+        // del jugador en su último punto (sin lag de snapshot).
+        this.net.sendKick(this.cameraCtrl.yaw, this.kickCharge, L.pos);
         L.anim = ANIM.KICK;
         L.actionUntil = now + 350;
         // Orientar la patada hacia la cámara.
@@ -261,6 +260,11 @@ export class GameClient {
         moveZ = nx * Math.sin(camYaw) + nz * Math.cos(camYaw);
         speed = wantsSprint ? PLAYER.SPRINT_SPEED : PLAYER.WALK_SPEED;
 
+        // Correr de espaldas es más lento: cuanto más apunta el movimiento
+        // contra el frente del cuerpo (cámara), más se reduce la velocidad.
+        const backDot = moveX * Math.sin(camYaw) + moveZ * Math.cos(camYaw);
+        if (backDot < 0) speed *= 1 + backDot * (1 - PLAYER.BACKPEDAL_MULT);
+
         // Estilo strafe: el cuerpo mantiene el frente hacia la cámara;
         // moverse al costado es un desplazamiento lateral, no un giro.
         L.yaw = lerpAngle(L.yaw, camYaw, 1 - Math.exp(-14 * dt));
@@ -280,7 +284,8 @@ export class GameClient {
 
     L.pos.x += moveX * speed * dt;
     L.pos.z += moveZ * speed * dt;
-    L.pos.x = THREE.MathUtils.clamp(L.pos.x, -HALF_L - 0.5, HALF_L + 0.5);
+    // Los jugadores viven DENTRO de la cancha: nadie rodea el arco por fuera.
+    L.pos.x = THREE.MathUtils.clamp(L.pos.x, -HALF_L + 0.4, HALF_L - 0.4);
     L.pos.z = THREE.MathUtils.clamp(L.pos.z, -HALF_W + 0.4, HALF_W - 0.4);
 
     // Salto / gravedad.
@@ -352,9 +357,20 @@ export class GameClient {
       const tx = L.pos.x + Math.sin(L.yaw) * dist;
       const tz = L.pos.z + Math.cos(L.yaw) * dist;
       const k = 1 - Math.exp(-DRIBBLE.FOLLOW_RATE * dt);
-      this.ball.mesh.position.x += (tx - this.ball.mesh.position.x) * k;
-      this.ball.mesh.position.z += (tz - this.ball.mesh.position.z) * k;
-      this.ball.mesh.position.y += (BALL.RADIUS - this.ball.mesh.position.y) * k;
+      const bp = this.ball.mesh.position;
+      bp.x += (tx - bp.x) * k;
+      bp.z += (tz - bp.z) * k;
+      bp.y += (BALL.RADIUS - bp.y) * k;
+
+      // Misma colisión con paredes/red que el servidor: el balón conducido
+      // no atraviesa bandas ni fondos (visualmente tampoco).
+      if (Math.abs(bp.z) > HALF_W - BALL.RADIUS) bp.z = Math.sign(bp.z) * (HALF_W - BALL.RADIUS);
+      const inGoalMouth = Math.abs(bp.z) < FIELD.GOAL_WIDTH / 2;
+      if (!inGoalMouth) {
+        if (Math.abs(bp.x) > HALF_L - BALL.RADIUS) bp.x = Math.sign(bp.x) * (HALF_L - BALL.RADIUS);
+      } else if (Math.abs(bp.x) > HALF_L + FIELD.GOAL_DEPTH - BALL.RADIUS) {
+        bp.x = Math.sign(bp.x) * (HALF_L + FIELD.GOAL_DEPTH - BALL.RADIUS);
+      }
     } else if (pair) {
       const { a, b, alpha } = pair;
       this.ball.mesh.position.set(

@@ -43,8 +43,13 @@ export class NetworkClient {
     ]);
   }
 
-  sendKick(yaw, power = 1) {
-    this.socket.emit('kick', { yaw, power });
+  /** pos: posición actual del jugador — el balón sale desde su frente. */
+  sendKick(yaw, power, pos) {
+    this.socket.emit('kick', {
+      yaw,
+      power,
+      pos: pos ? [+pos.x.toFixed(2), +pos.z.toFixed(2)] : undefined,
+    });
   }
 
   sendChallenge(type) {

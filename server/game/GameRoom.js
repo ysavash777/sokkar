@@ -7,7 +7,13 @@
  * el servidor retransmite snapshots a 20 Hz.
  */
 import { FIELD, BALL, DRIBBLE, ACTIONS, NET, ANIM, PLAYER } from '../../shared/constants.js';
-import { stepBall, collideBallWithArms, checkGoalCrossing, clampToPitch } from './physics.js';
+import {
+  stepBall,
+  collideBallWithArms,
+  collideBallWithSlidingBody,
+  checkGoalCrossing,
+  clampToPitch,
+} from './physics.js';
 
 const HALF_L = FIELD.LENGTH / 2;
 const HALF_W = FIELD.WIDTH / 2;
@@ -112,10 +118,11 @@ export class GameRoom {
     if (!p || !Array.isArray(data)) return;
     const [x, y, z, yaw, anim, sprinting] = data;
     if (![x, y, z, yaw].every(Number.isFinite)) return;
-    // Clamps anti-trampa básicos: dentro del área jugable.
-    p.pos.x = Math.max(-HALF_L - 1, Math.min(HALF_L + 1, x));
+    // Clamps anti-trampa: los jugadores viven DENTRO de la cancha (así
+    // nadie puede rodear el arco y meter el balón "desde afuera").
+    p.pos.x = Math.max(-HALF_L + 0.3, Math.min(HALF_L - 0.3, x));
     p.pos.y = Math.max(0, Math.min(4, y));
-    p.pos.z = Math.max(-HALF_W - 1, Math.min(HALF_W + 1, z));
+    p.pos.z = Math.max(-HALF_W + 0.3, Math.min(HALF_W - 0.3, z));
     p.yaw = yaw;
     p.anim = anim | 0;
     p.sprinting = !!sprinting;
@@ -135,12 +142,44 @@ export class GameRoom {
     if (ball.ownerId !== id && !withinRange) return;
 
     const dirYaw = Number.isFinite(data?.yaw) ? data.yaw : p.yaw;
-    const power = Math.max(ACTIONS.KICK_MIN_POWER, Math.min(1, Number(data?.power) || 1));
+    const charge = Math.max(0, Math.min(1, Number(data?.power) || 0));
+
+    // Origen del disparo: el balón sale SIEMPRE desde adelante del pateador,
+    // en su última posición conocida por el cliente (con el estado del
+    // servidor el balón quedaba ~2 pasos atrás al patear en sprint, por el
+    // lag entre cliente y snapshot). Validado contra teleports (máx. 3 m).
+    if (ball.ownerId === id) {
+      let kx = p.pos.x;
+      let kz = p.pos.z;
+      if (Array.isArray(data?.pos) && data.pos.length === 2 && data.pos.every(Number.isFinite)) {
+        const ddx = data.pos[0] - p.pos.x;
+        const ddz = data.pos[1] - p.pos.z;
+        if (ddx * ddx + ddz * ddz < 9) {
+          kx = data.pos[0];
+          kz = data.pos[1];
+        }
+      }
+      ball.pos.x = kx + Math.sin(dirYaw) * DRIBBLE.DIST_JOG;
+      ball.pos.z = kz + Math.cos(dirYaw) * DRIBBLE.DIST_JOG;
+      ball.pos.y = BALL.RADIUS;
+      clampToPitch(ball);
+    }
+
+    // Potencia por tramos: toque ~1 m, media barra ~2 m, llena = remate real.
+    let speed;
+    if (charge <= 0.5) {
+      speed = ACTIONS.KICK_TAP_SPEED + (ACTIONS.KICK_MID_SPEED - ACTIONS.KICK_TAP_SPEED) * (charge / 0.5);
+    } else {
+      const t = (charge - 0.5) / 0.5;
+      speed = ACTIONS.KICK_MID_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_MID_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
+    }
+    // Elevación solo en remates fuertes (los toques ruedan al ras).
+    const liftT = Math.max(0, (charge - 0.4) / 0.6);
     p.lastKickAt = now;
     ball.ownerId = null;
-    ball.vel.x = Math.sin(dirYaw) * ACTIONS.KICK_POWER * power;
-    ball.vel.z = Math.cos(dirYaw) * ACTIONS.KICK_POWER * power;
-    ball.vel.y = ACTIONS.KICK_LIFT * power;
+    ball.vel.x = Math.sin(dirYaw) * speed;
+    ball.vel.z = Math.cos(dirYaw) * speed;
+    ball.vel.y = ACTIONS.KICK_LIFT * Math.pow(liftT, 1.5);
     this.io.emit('kicked', { id });
   }
 
@@ -201,6 +240,11 @@ export class GameRoom {
       // Sin colisión de cuerpo ni captura automática: el balón libre pasa
       // de largo (como entre las piernas) salvo que un jugador presione
       // cruzar pie / barrida (ver resolveChallenge) para recibirlo a propósito.
+      // EXCEPCIÓN: un cuerpo BARRIÉNDOSE sí es sólido — el balón rebota
+      // contra todo el cuerpo tendido (frente, costado o por encima).
+      for (const p of this.players.values()) {
+        if (p.challenge?.type === 'slide') collideBallWithSlidingBody(ball, p);
+      }
     }
   }
 
@@ -290,10 +334,11 @@ export class GameRoom {
 
   /**
    * Regla de cruzar pie / barrida:
-   *  1) Si conecta con la PELOTA -> se la queda pegada (control/robo).
-   *     - Cruzar pie: la pelota debe estar dentro del área de control
-   *       circular alrededor del jugador (cualquier ángulo).
-   *     - Barrida: el pie del lunge debe alcanzarla; también queda pegada.
+   *  1) Si conecta con la PELOTA:
+   *     - Cruzar pie: la controla/roba (queda pegada) si está dentro del
+   *       área de control circular alrededor del jugador (cualquier ángulo).
+   *     - Barrida: NO controla — solo DESPOJA: el balón queda suelto con
+   *       un empujón corto (contacto pie-balón del lunge).
    *  2) Si en cambio conecta con el RIVAL -> falta (en la barrida cuenta
    *     también el contacto de cuerpo, no solo el pie).
    */
@@ -313,20 +358,35 @@ export class GameRoom {
         const dz = ball.pos.z - p.pos.z;
         touchesBall = dx * dx + dz * dz < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS;
       } else {
-        const bdx = ball.pos.x - footX;
-        const bdz = ball.pos.z - footZ;
-        touchesBall = bdx * bdx + bdz * bdz < ACTIONS.STEAL_RADIUS * ACTIONS.STEAL_RADIUS;
+        // La barrida solo tiene sentido contra un balón CONTROLADO por un
+        // rival (el balón libre rebota contra el cuerpo en el tick).
+        if (!ball.ownerId) {
+          touchesBall = false;
+        } else {
+          const bdx = ball.pos.x - footX;
+          const bdz = ball.pos.z - footZ;
+          touchesBall = bdx * bdx + bdz * bdz < ACTIONS.STEAL_RADIUS * ACTIONS.STEAL_RADIUS;
+        }
       }
     }
     if (touchesBall) {
       const prevOwner = this.players.get(ball.ownerId);
       c.resolved = true;
-      // El rival despojado no puede re-capturar al instante: el robo debe "quedarse".
+      // El rival despojado no puede re-capturar al instante: el despojo debe "quedarse".
       if (prevOwner) prevOwner.captureLockUntil = now + 1000;
-      // Tanto cruzar pie como barrida dejan la pelota pegada a quien la tocó.
-      ball.ownerId = p.id;
-      ball.capturedAt = now;
-      this.io.emit('possession', { id: p.id });
+      if (c.type === 'slide') {
+        // La barrida solo quita la posesión: balón suelto, empujón corto.
+        ball.ownerId = null;
+        ball.vel.x = Math.sin(p.yaw) * 3.5;
+        ball.vel.z = Math.cos(p.yaw) * 3.5;
+        ball.vel.y = 0.8;
+        p.captureLockUntil = now + 400;
+      } else {
+        // Cruzar pie sí controla: queda pegada.
+        ball.ownerId = p.id;
+        ball.capturedAt = now;
+        this.io.emit('possession', { id: p.id });
+      }
       this.io.emit('steal', {
         by: p.id,
         from: prevOwner ? prevOwner.id : null,

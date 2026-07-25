@@ -19,10 +19,16 @@ Entrás con un nickname y ya estás en la partida.
 
 > Cruzar pie: si la pelota está dentro del **círculo de control** que ves
 > en la base de tu personaje, te la quedás — podés spamear el botón o
-> tocarlo justo cuando llega. Barrida: si tocás la **pelota**, queda
-> pegada a tus pies; si contactás al **rival** (pie o cuerpo), es **falta**
-> (3 s aturdido). El balón libre no se pega solo: si no cruzás el pie, te
-> atraviesa como si pasara entre las piernas.
+> tocarlo justo cuando llega. Barrida: **no controla** — si tu pie conecta
+> la pelota del rival, se la **quita** (queda suelta); si contactás al
+> **rival** (pie o cuerpo), es **falta** (3 s aturdido). Mientras barrés,
+> tu cuerpo tendido bloquea el balón libre (rebota, no te atraviesa).
+> El balón libre no se pega solo: si no cruzás el pie, te atraviesa como
+> si pasara entre las piernas.
+>
+> Remate: un toque suelto adelanta la pelota ~1 m, media barra ~2 m, y de
+> ahí a barra llena crece hasta el cañonazo. Correr de espaldas es más
+> lento que de frente.
 >
 > Si el balón toca tu **brazo** (entre hombro y mano) en cualquier
 > momento —salto, barrida, lo que sea— es **mano**: falta automática.

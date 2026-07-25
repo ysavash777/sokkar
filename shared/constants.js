@@ -27,6 +27,7 @@ export const PLAYER = {
   RADIUS: 0.35,
   WALK_SPEED: 5.2,
   SPRINT_SPEED: 8.6,
+  BACKPEDAL_MULT: 0.62, // correr de espaldas es más lento
   JUMP_SPEED: 7.5,
   GRAVITY: 20,
   // Stamina: se agota sprintando; NO recarga mientras Shift esté presionado
@@ -50,13 +51,16 @@ export const DRIBBLE = {
 
 export const ACTIONS = {
   // Remate cargado: mantener clic izq llena la barra (SIN cooldown).
-  // Curva de potencia no lineal: un toque suelto apenas empuja el balón
-  // ~1 m; solo cerca de la barra llena el remate se vuelve muy fuerte.
+  // Potencia por tramos (velocidad inicial del balón):
+  //   toque suelto -> el balón se adelanta ~1 m
+  //   media barra  -> ~2 m
+  //   barra llena  -> remate a plena potencia (KICK_POWER)
   KICK_POWER: 40,
+  KICK_TAP_SPEED: 0.72, // velocidad del toque mínimo (~1 m rodando)
+  KICK_MID_SPEED: 1.45, // velocidad a media barra (~2 m rodando)
+  KICK_CURVE: 1.8, // exponente del tramo superior (mitad -> llena)
   KICK_LIFT: 8,
   KICK_RANGE: 1.5,
-  KICK_MIN_POWER: 0.03,
-  KICK_CURVE: 1.8,
   KICK_CHARGE_TIME_MS: 900,
   RECAPTURE_DELAY_MS: 450, // quien patea no re-captura su propio pase al instante
 
