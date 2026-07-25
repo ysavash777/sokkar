@@ -78,12 +78,20 @@ envolvente único**: el servidor replica la silueta con una cápsula por
 extremidad (`server/game/physics.js → LIMB_CAPSULES`), de modo que el balón
 solo rebota donde visualmente hay cuerpo — nunca en "aire".
 
-### Cámara 360 desacoplada
+### Cámara 360 desacoplada + strafe
 
-La cámara orbita libre con el mouse (pointer lock). El personaje **no** rota
-con ella: su yaw sigue la dirección de movimiento (WASD relativo a cámara),
-lo que permite mirar a los lados mientras se corre. La patada sí usa el yaw
-de cámara como dirección de apuntado.
+La cámara orbita libre con el mouse (pointer lock). Con el personaje quieto,
+la cámara **no** lo rota. Al moverse, el cuerpo encara hacia adelante
+(yaw de cámara) y el movimiento lateral es un **strafe** — ir al costado no
+gira el cuerpo, lo que da un control de balón más cómodo.
+
+### Remate cargado
+
+Mantener clic izquierdo llena la barra de poder (~0.9 s) y proyecta una
+línea de puntería sobre el césped siguiendo el yaw de la cámara en tiempo
+real. Al soltar, se patea con potencia `0.3..1.0`. **Sin cooldown**; solo
+persiste una protección de re-captura de 450 ms para no volver a imantar
+el propio pase.
 
 ### Conducción del balón
 

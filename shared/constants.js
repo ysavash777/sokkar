@@ -41,17 +41,21 @@ export const DRIBBLE = {
   DIST_IDLE: 0.5,
   DIST_JOG: 0.72,
   DIST_SPRINT: 1.15,
-  CONTROL_RADIUS: 1.05, // distancia para capturar un balón libre
-  MAX_CAPTURE_SPEED: 9, // el balón muy rápido no se controla al instante
+  CONTROL_RADIUS: 1.25, // distancia para capturar un balón libre
+  MAX_CAPTURE_SPEED: 12, // el balón muy rápido no se controla al instante
   MAX_CAPTURE_HEIGHT: 0.9,
   FOLLOW_RATE: 14, // qué tan rápido el balón persigue el punto de control
+  CAPTURE_RAMP_S: 0.35, // rampa del seguimiento tras capturar (primer toque suave)
 };
 
 export const ACTIONS = {
-  KICK_POWER: 16,
-  KICK_LIFT: 4.5,
+  // Remate cargado: mantener clic izq llena la barra (SIN cooldown).
+  KICK_POWER: 18,
+  KICK_LIFT: 5.5,
   KICK_RANGE: 1.5,
-  KICK_COOLDOWN_MS: 450,
+  KICK_MIN_POWER: 0.3,
+  KICK_CHARGE_TIME_MS: 900,
+  RECAPTURE_DELAY_MS: 450, // quien patea no re-captura su propio pase al instante
 
   // Cruzar pie (clic ruedita): extensión defensiva corta.
   EXTEND_REACH: 1.0,

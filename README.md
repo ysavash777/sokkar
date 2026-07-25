@@ -9,11 +9,11 @@ Entrás con un nickname y ya estás en la partida.
 
 | Entrada | Acción |
 |---|---|
-| `WASD` | Moverse (relativo a la cámara) |
-| `Mouse` | Cámara 360° (no rota al personaje) |
+| `WASD` | Moverse (relativo a la cámara, con strafe lateral) |
+| `Mouse` | Cámara 360° (no rota al personaje si está quieto) |
 | `Shift` | Sprint (stamina, recarga completa en ~5 s) |
 | `Espacio` | Salto |
-| `Clic izquierdo` | Patear (en dirección de la cámara) |
+| `Clic izquierdo (mantener)` | Cargar remate: barra de poder + línea de dirección según la cámara; se dispara al soltar (sin cooldown) |
 | `Clic ruedita` | Cruzar pie (robo defensivo corto) |
 | `Clic derecho` | Barrida |
 

@@ -19,6 +19,8 @@ function getGeos() {
     head: new THREE.BoxGeometry(0.45, 0.45, 0.45),
     torso: new THREE.BoxGeometry(0.45, 0.68, 0.24),
     limb: new THREE.BoxGeometry(0.2, 0.68, 0.2),
+    eye: new THREE.BoxGeometry(0.09, 0.09, 0.02),
+    hair: new THREE.BoxGeometry(0.47, 0.12, 0.47),
   };
   return geoCache;
 }
@@ -40,9 +42,18 @@ export class SteveCharacter {
     this.torso = new THREE.Mesh(g.torso, matShirt);
     this.torso.position.y = 1.19;
 
-    // Cabeza.
+    // Cabeza con "cara" (ojos + pelo) para distinguir el frente (+Z local).
     this.head = new THREE.Mesh(g.head, matSkin);
     this.head.position.y = 1.76;
+    const matEye = new THREE.MeshBasicMaterial({ color: 0x2b1d4f });
+    const matHair = new THREE.MeshLambertMaterial({ color: 0x4a2f1b });
+    const eyeL = new THREE.Mesh(g.eye, matEye);
+    eyeL.position.set(-0.1, 0.03, 0.23);
+    const eyeR = new THREE.Mesh(g.eye, matEye);
+    eyeR.position.set(0.1, 0.03, 0.23);
+    const hair = new THREE.Mesh(g.hair, matHair);
+    hair.position.y = 0.24;
+    this.head.add(eyeL, eyeR, hair);
 
     // Extremidades con pivote en la articulación (hombro/cadera):
     // el mesh cuelga hacia abajo dentro de un Group pivote.
@@ -108,8 +119,9 @@ export class SteveCharacter {
 
     if (s === ANIM.SLIDE) {
       // Barrida: cuerpo reclinado, pierna derecha extendida al frente.
-      this.body.rotation.x = -1.15;
-      this.body.position.y = -0.55;
+      // Offset moderado para que el cuerpo NO atraviese el piso.
+      this.body.rotation.x = -0.95;
+      this.body.position.y = -0.32;
       this.legR.rotation.x = -1.3;
       this.legL.rotation.x = 0.35;
       this.armL.rotation.x = 0.8;

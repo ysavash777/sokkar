@@ -15,8 +15,10 @@ const io = new Server(server, {
   serveClient: true,
 });
 
-app.use(express.static(path.join(rootDir, 'client'), { maxAge: '1h', index: 'index.html' }));
-app.use('/shared', express.static(path.join(rootDir, 'shared'), { maxAge: '1h' }));
+// Cache de estáticos solo en producción (en dev rompe la iteración).
+const staticMaxAge = process.env.NODE_ENV === 'production' ? '1h' : 0;
+app.use(express.static(path.join(rootDir, 'client'), { maxAge: staticMaxAge, index: 'index.html' }));
+app.use('/shared', express.static(path.join(rootDir, 'shared'), { maxAge: staticMaxAge }));
 app.get('/healthz', (_req, res) => res.send('ok'));
 
 const room = new GameRoom(io);

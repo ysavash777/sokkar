@@ -54,6 +54,7 @@ export class GameRoom {
       moving: false,
       stunnedUntil: 0,
       lastKickAt: 0,
+      captureLockUntil: 0, // no puede capturar el balón (post-robo/barrida)
       challenge: null, // { type, until, cooldownUntil, fouled }
       challengeCooldownUntil: 0,
     };
@@ -125,7 +126,6 @@ export class GameRoom {
     if (!p) return;
     const now = Date.now();
     if (now < p.stunnedUntil || now < this.kickoffFreezeUntil) return;
-    if (now - p.lastKickAt < ACTIONS.KICK_COOLDOWN_MS) return;
 
     const ball = this.ball;
     const dx = ball.pos.x - p.pos.x;
@@ -134,7 +134,7 @@ export class GameRoom {
     if (ball.ownerId !== id && !withinRange) return;
 
     const dirYaw = Number.isFinite(data?.yaw) ? data.yaw : p.yaw;
-    const power = Math.max(0.3, Math.min(1, Number(data?.power) || 1));
+    const power = Math.max(ACTIONS.KICK_MIN_POWER, Math.min(1, Number(data?.power) || 1));
     p.lastKickAt = now;
     ball.ownerId = null;
     ball.vel.x = Math.sin(dirYaw) * ACTIONS.KICK_POWER * power;
@@ -204,7 +204,12 @@ export class GameRoom {
     const tx = owner.pos.x + Math.sin(owner.yaw) * dist;
     const tz = owner.pos.z + Math.cos(owner.yaw) * dist;
 
-    const k = 1 - Math.exp(-DRIBBLE.FOLLOW_RATE * dt);
+    // Primer toque suave: el seguimiento arranca lento tras capturar
+    // para que el balón no se "teletransporte" al pie.
+    const age = (now - (this.ball.capturedAt || 0)) / 1000;
+    const ramp = Math.min(1, age / DRIBBLE.CAPTURE_RAMP_S);
+    const rate = 4 + (DRIBBLE.FOLLOW_RATE - 4) * ramp;
+    const k = 1 - Math.exp(-rate * dt);
     const ball = this.ball;
     ball.pos.x += (tx - ball.pos.x) * k;
     ball.pos.z += (tz - ball.pos.z) * k;
@@ -227,8 +232,8 @@ export class GameRoom {
     let best = null;
     let bestDistSq = DRIBBLE.CONTROL_RADIUS * DRIBBLE.CONTROL_RADIUS;
     for (const p of this.players.values()) {
-      if (now < p.stunnedUntil || p.pos.y > 0.4) continue;
-      if (now - p.lastKickAt < ACTIONS.KICK_COOLDOWN_MS) continue; // no re-capturar el propio pase al instante
+      if (now < p.stunnedUntil || now < p.captureLockUntil || p.pos.y > 0.4) continue;
+      if (now - p.lastKickAt < ACTIONS.RECAPTURE_DELAY_MS) continue; // no re-capturar el propio pase al instante
       const dx = ball.pos.x - p.pos.x;
       const dz = ball.pos.z - p.pos.z;
       const d = dx * dx + dz * dz;
@@ -239,6 +244,7 @@ export class GameRoom {
     }
     if (best) {
       ball.ownerId = best.id;
+      ball.capturedAt = now;
       this.io.emit('possession', { id: best.id });
     }
   }
@@ -264,15 +270,21 @@ export class GameRoom {
       ball.ownerId !== p.id
     ) {
       const prevOwner = this.players.get(ball.ownerId);
+      const now2 = Date.now();
       c.resolved = true;
+      // El rival despojado no puede re-capturar al instante: el robo debe "quedarse".
+      if (prevOwner) prevOwner.captureLockUntil = now2 + 1000;
       if (c.type === 'slide') {
         // La barrida despeja el balón hacia adelante.
         ball.ownerId = null;
         ball.vel.x = Math.sin(p.yaw) * 7;
         ball.vel.z = Math.cos(p.yaw) * 7;
         ball.vel.y = 1.5;
+        p.captureLockUntil = now2 + 400;
       } else {
         ball.ownerId = p.id;
+        ball.capturedAt = now2;
+        this.io.emit('possession', { id: p.id });
       }
       this.io.emit('steal', {
         by: p.id,
@@ -293,7 +305,11 @@ export class GameRoom {
         p.stunnedUntil = now + ACTIONS.FOUL_STUN_MS;
         p.challenge = null;
         // Si la víctima tenía el balón, lo conserva; si era libre, se lo queda.
-        if (!this.ball.ownerId || this.ball.ownerId === p.id) this.ball.ownerId = rival.id;
+        if (!this.ball.ownerId || this.ball.ownerId === p.id) {
+          this.ball.ownerId = rival.id;
+          this.ball.capturedAt = now;
+          this.io.emit('possession', { id: rival.id });
+        }
         this.io.emit('foul', {
           offender: p.id,
           victim: rival.id,

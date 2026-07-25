@@ -157,6 +157,24 @@ body {
   transition: width 0.1s linear;
 }
 
+#power-wrap {
+  position: absolute;
+  bottom: 42px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 260px;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+#power-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #fb923c, #ef4444);
+}
+
 #messages {
   position: absolute;
   top: 72px;

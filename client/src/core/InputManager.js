@@ -9,8 +9,9 @@ export class InputManager {
     this.keys = new Set();
     this.mouseDX = 0;
     this.mouseDY = 0;
+    this.kickHeld = false; // clic izq mantenido = cargando remate
     // Acciones one-shot que el game loop consume.
-    this.queued = { kick: false, extend: false, slide: false, jump: false };
+    this.queued = { kickRelease: false, extend: false, slide: false, jump: false };
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
@@ -22,17 +23,26 @@ export class InputManager {
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
 
     canvas.addEventListener('mousedown', (e) => {
+      e.preventDefault();
       if (document.pointerLockElement !== canvas) {
         canvas.requestPointerLock();
         return;
       }
-      if (e.button === 0) this.queued.kick = true;
+      if (e.button === 0) this.kickHeld = true;
       else if (e.button === 1) this.queued.extend = true;
       else if (e.button === 2) this.queued.slide = true;
-      e.preventDefault();
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0 && this.kickHeld) {
+        this.kickHeld = false;
+        this.queued.kickRelease = true;
+      }
     });
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // El clic de rueda dispara auxclick/autoscroll en algunos navegadores.
+    canvas.addEventListener('auxclick', (e) => e.preventDefault());
 
     document.addEventListener('mousemove', (e) => {
       if (document.pointerLockElement !== this.canvas) return;

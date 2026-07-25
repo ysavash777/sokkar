@@ -45,10 +45,22 @@ export class GameClient {
     };
     this.ballOwnerId = null;
     this.sendAccumulator = 0;
+    this.kickCharge = 0;
 
     this.scene.add(createPitch());
     this.ball = new Ball();
     this.scene.add(this.ball.mesh);
+
+    // Línea de puntería del remate cargado (plana sobre el césped).
+    const aimGeo = new THREE.PlaneGeometry(0.16, 1);
+    aimGeo.rotateX(-Math.PI / 2);
+    aimGeo.translate(0, 0, 0.5); // origen en el jugador, crece hacia +Z
+    this.aimLine = new THREE.Mesh(
+      aimGeo,
+      new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.85 }),
+    );
+    this.aimLine.visible = false;
+    this.scene.add(this.aimLine);
 
     this.bindNetEvents();
   }
@@ -150,12 +162,19 @@ export class GameClient {
 
     // ---- acciones
     if (!stunned && !sliding) {
-      if (this.input.consume('kick')) {
-        this.net.sendKick(this.cameraCtrl.yaw);
+      // Remate cargado (sin cooldown): mantener clic izq llena la barra
+      // y muestra la línea de dirección según la cámara.
+      if (this.input.kickHeld) {
+        this.kickCharge = Math.min(1, this.kickCharge + (dt * 1000) / ACTIONS.KICK_CHARGE_TIME_MS);
+      }
+      if (this.input.consume('kickRelease')) {
+        const power = ACTIONS.KICK_MIN_POWER + (1 - ACTIONS.KICK_MIN_POWER) * this.kickCharge;
+        this.net.sendKick(this.cameraCtrl.yaw, power);
         L.anim = ANIM.KICK;
         L.actionUntil = now + 350;
         // Orientar la patada hacia la cámara.
         L.yaw = this.cameraCtrl.yaw;
+        this.kickCharge = 0;
       }
       if (this.input.consume('extend') && now > L.extendCdUntil) {
         this.net.sendChallenge('extend');
@@ -175,11 +194,23 @@ export class GameClient {
       }
     } else {
       // Descartar acciones encoladas mientras está bloqueado.
-      this.input.consume('kick');
+      this.input.consume('kickRelease');
       this.input.consume('extend');
       this.input.consume('slide');
       this.input.consume('jump');
+      this.kickCharge = 0;
     }
+
+    // Línea de puntería + barra de poder mientras se carga el remate.
+    const charging = this.input.kickHeld && !stunned && !sliding;
+    this.aimLine.visible = charging;
+    if (charging) {
+      const len = 3.5 + this.kickCharge * 8.5;
+      this.aimLine.scale.z = len;
+      this.aimLine.position.set(L.pos.x, 0.03, L.pos.z);
+      this.aimLine.rotation.y = this.cameraCtrl.yaw;
+    }
+    this.hud.setPower(charging ? this.kickCharge : null);
 
     // ---- movimiento
     let moveX = 0;
@@ -196,20 +227,21 @@ export class GameClient {
       const axis = this.input.moveAxis;
       if (axis.x !== 0 || axis.z !== 0) {
         // WASD relativo al yaw de la cámara.
+        // forward = (sin, cos); right en pantalla = (-cos, sin).
         const camYaw = this.cameraCtrl.yaw;
         const len = Math.hypot(axis.x, axis.z);
         const nx = axis.x / len;
         const nz = axis.z / len;
-        moveX = nx * Math.cos(camYaw) + nz * Math.sin(camYaw);
-        moveZ = -nx * Math.sin(camYaw) + nz * Math.cos(camYaw);
+        moveX = -nx * Math.cos(camYaw) + nz * Math.sin(camYaw);
+        moveZ = nx * Math.sin(camYaw) + nz * Math.cos(camYaw);
 
         const wantsSprint = this.input.sprint && L.stamina > PLAYER.STAMINA_MIN_TO_SPRINT;
         L.sprinting = wantsSprint;
         speed = wantsSprint ? PLAYER.SPRINT_SPEED : PLAYER.WALK_SPEED;
 
-        // El personaje mira hacia donde SE MUEVE, no hacia la cámara.
-        const targetYaw = Math.atan2(moveX, moveZ);
-        L.yaw = lerpAngle(L.yaw, targetYaw, 1 - Math.exp(-14 * dt));
+        // Estilo strafe: el cuerpo mantiene el frente hacia la cámara;
+        // moverse al costado es un desplazamiento lateral, no un giro.
+        L.yaw = lerpAngle(L.yaw, camYaw, 1 - Math.exp(-14 * dt));
       } else {
         L.sprinting = false;
       }

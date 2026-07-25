@@ -5,7 +5,19 @@ export class HUD {
     this.scoreRed = document.getElementById('score-red');
     this.scoreBlue = document.getElementById('score-blue');
     this.staminaBar = document.getElementById('stamina-bar');
+    this.powerWrap = document.getElementById('power-wrap');
+    this.powerBar = document.getElementById('power-bar');
     this.messages = document.getElementById('messages');
+  }
+
+  /** frac 0..1 mientras se carga el remate; null la oculta. */
+  setPower(frac) {
+    if (frac === null) {
+      this.powerWrap.classList.add('hidden');
+      return;
+    }
+    this.powerWrap.classList.remove('hidden');
+    this.powerBar.style.width = `${Math.round(frac * 100)}%`;
   }
 
   show() {
