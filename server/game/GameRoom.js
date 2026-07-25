@@ -164,9 +164,10 @@ export class GameRoom {
     const now = Date.now();
     const ball = this.ball;
 
-    // Mano: contacto del balón con el brazo (hombro a mano) en CUALQUIER
-    // momento, sea cual sea la animación (dribbling, salto, barrida...).
-    this.checkHandball(now);
+    // Mano: DESACTIVADA por el momento (contacto del balón con el brazo,
+    // hombro a mano). Método intacto en checkHandball() para reactivarla
+    // más adelante — solo falta descomentar esta línea.
+    // this.checkHandball(now);
 
     // Resolver desafíos activos (cruzar pie / barrida).
     for (const p of this.players.values()) {
