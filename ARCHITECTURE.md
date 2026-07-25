@@ -89,9 +89,38 @@ gira el cuerpo, lo que da un control de balón más cómodo.
 
 Mantener clic izquierdo llena la barra de poder (~0.9 s) y proyecta una
 línea de puntería sobre el césped siguiendo el yaw de la cámara en tiempo
-real. Al soltar, se patea con potencia `0.3..1.0`. **Sin cooldown**; solo
-persiste una protección de re-captura de 450 ms para no volver a imantar
-el propio pase.
+real. Al soltar, se patea con potencia `KICK_MIN_POWER..1`, aplicada con
+una curva no lineal (`power^KICK_CURVE`) para que un toque suelto apenas
+empuje el balón ~1 m y solo cerca de la barra llena el remate sea muy
+fuerte. **Sin cooldown**; solo persiste una protección de re-captura de
+450 ms para no volver a imantar el propio pase.
+
+### El balón libre "pasa entre las piernas"
+
+Cuando nadie lo posee, el balón **no** colisiona con el cuerpo de los
+jugadores ni se captura automáticamente por cercanía — los atraviesa. La
+única forma de recibirlo/controlarlo a propósito es **cruzar pie** (clic
+ruedita) o la **barrida**, apuntando el pie extendido dentro de
+`ACTIONS.STEAL_RADIUS`; eso es lo que ejecuta `resolveChallenge` en
+`GameRoom.js`. Patear sigue funcionando por contacto directo dentro de
+`KICK_RANGE`, sin necesidad de haberlo controlado antes.
+
+### Mano (falta en cualquier animación)
+
+Los brazos (`ARM_CAPSULES`, entre hombro y mano) se revisan en **cada
+tick**, de forma independiente a la animación en curso o a quién posee el
+balón (`GameRoom.checkHandball`) — aplica igual en salto, barrida o
+dribbling. Cualquier contacto del balón con un brazo aturde al infractor
+3 s y entrega el balón al rival más cercano.
+
+### Balón conducido: gol y límites de cancha
+
+Antes, mientras un jugador conducía el balón, este se movía "por fuera"
+de la física estándar (`stepBall`) y nunca se comprobaban gol ni bandas.
+`GameRoom.dribble()` ahora también llama a `checkGoalCrossing` y
+`clampToPitch` (`physics.js`) en cada tick, así que entrar al arco con el
+balón en los pies anota igual que un remate, y no se puede arrastrar el
+balón a través de una banda o el fondo fuera del arco.
 
 ### Conducción del balón
 

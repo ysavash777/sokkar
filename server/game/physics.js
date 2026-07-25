@@ -19,6 +19,9 @@ export const LIMB_CAPSULES = [
   { name: 'head', lat: 0, y0: 1.55, y1: 1.75, fwd: 0, r: 0.24 },
 ];
 
+// Solo los brazos (entre hombro y mano): usados para detectar "mano".
+const ARM_CAPSULES = LIMB_CAPSULES.filter((c) => c.name === 'armL' || c.name === 'armR');
+
 /** Punto más cercano de un segmento vertical (cápsula) al centro del balón. */
 function closestPointOnCapsule(px, py0, py1, pz, bx, by, bz) {
   const cy = Math.max(py0, Math.min(py1, by));
@@ -29,12 +32,12 @@ function closestPointOnCapsule(px, py0, py1, pz, bx, by, bz) {
  * Colisión balón vs. extremidades de un jugador (posición + yaw).
  * Devuelve true si hubo contacto (y muta pos/vel del balón).
  */
-export function collideBallWithPlayer(ball, player) {
+export function collideBallWithPlayer(ball, player, capsules = LIMB_CAPSULES) {
   const sin = Math.sin(player.yaw);
   const cos = Math.cos(player.yaw);
   let hit = false;
 
-  for (const c of LIMB_CAPSULES) {
+  for (const c of capsules) {
     // Rotar el offset local (lat, fwd) por el yaw del jugador.
     const ox = player.pos.x + c.lat * cos + c.fwd * sin;
     const oz = player.pos.z - c.lat * sin + c.fwd * cos;
@@ -68,6 +71,39 @@ export function collideBallWithPlayer(ball, player) {
     }
   }
   return hit;
+}
+
+/**
+ * Colisión balón vs. brazos (hombro a mano) de un jugador, en CUALQUIER
+ * momento — dribbling, salto, barrida, lo que sea. Se usa para detectar
+ * "mano" y cobrar falta, independiente del resto del cuerpo.
+ */
+export function collideBallWithArms(ball, player) {
+  return collideBallWithPlayer(ball, player, ARM_CAPSULES);
+}
+
+/**
+ * Detecta si el balón cruzó por completo la línea de gol (dentro del
+ * ancho/alto del arco). No integra física, solo evalúa la posición.
+ * Se usa tanto para el balón libre como para el balón conducido a los pies.
+ */
+export function checkGoalCrossing(ball) {
+  const inGoalMouth = Math.abs(ball.pos.z) < FIELD.GOAL_WIDTH / 2 && ball.pos.y < FIELD.GOAL_HEIGHT + 0.5;
+  if (inGoalMouth && Math.abs(ball.pos.x) > HALF_L + BALL.RADIUS) {
+    return ball.pos.x > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+/** Recorta la posición del balón para que no atraviese bandas/fondos (sin rebote). */
+export function clampToPitch(ball) {
+  if (Math.abs(ball.pos.z) > HALF_W - BALL.RADIUS) {
+    ball.pos.z = Math.sign(ball.pos.z) * (HALF_W - BALL.RADIUS);
+  }
+  const inGoalMouth = Math.abs(ball.pos.z) < FIELD.GOAL_WIDTH / 2;
+  if (!inGoalMouth && Math.abs(ball.pos.x) > HALF_L - BALL.RADIUS) {
+    ball.pos.x = Math.sign(ball.pos.x) * (HALF_L - BALL.RADIUS);
+  }
 }
 
 /**

@@ -7,7 +7,7 @@
  * el servidor retransmite snapshots a 20 Hz.
  */
 import { FIELD, BALL, DRIBBLE, ACTIONS, NET, ANIM, PLAYER } from '../../shared/constants.js';
-import { stepBall, collideBallWithPlayer } from './physics.js';
+import { stepBall, collideBallWithArms, checkGoalCrossing, clampToPitch } from './physics.js';
 
 const HALF_L = FIELD.LENGTH / 2;
 const HALF_W = FIELD.WIDTH / 2;
@@ -55,6 +55,7 @@ export class GameRoom {
       stunnedUntil: 0,
       lastKickAt: 0,
       captureLockUntil: 0, // no puede capturar el balón (post-robo/barrida)
+      handballCooldownUntil: 0,
       challenge: null, // { type, until, cooldownUntil, fouled }
       challengeCooldownUntil: 0,
     };
@@ -163,6 +164,10 @@ export class GameRoom {
     const now = Date.now();
     const ball = this.ball;
 
+    // Mano: contacto del balón con el brazo (hombro a mano) en CUALQUIER
+    // momento, sea cual sea la animación (dribbling, salto, barrida...).
+    this.checkHandball(now);
+
     // Resolver desafíos activos (cruzar pie / barrida).
     for (const p of this.players.values()) {
       if (!p.challenge) continue;
@@ -174,27 +179,70 @@ export class GameRoom {
     }
 
     if (ball.ownerId) {
-      this.dribble(dt, now);
+      const goal = this.dribble(dt, now);
+      if (goal !== 0) {
+        this.onGoal(goal === 1 ? 0 : 1);
+        return;
+      }
     } else {
       const goal = stepBall(ball, dt);
       if (goal !== 0) {
         this.onGoal(goal === 1 ? 0 : 1);
         return;
       }
-      // Colisión por extremidades con cada jugador (solo balón libre).
-      for (const p of this.players.values()) {
-        collideBallWithPlayer(ball, p);
-      }
-      this.tryCapture(now);
+      // Sin colisión de cuerpo ni captura automática: el balón libre pasa
+      // de largo (como entre las piernas) salvo que un jugador presione
+      // cruzar pie / barrida (ver resolveChallenge) para recibirlo a propósito.
     }
   }
 
-  /** El balón sigue el punto de control frente a los pies del dueño. */
+  /**
+   * Contacto del balón con un brazo (entre hombro y mano): siempre es
+   * falta, sin importar la animación en curso. Otorga el balón al rival
+   * más cercano y aturde al infractor.
+   */
+  checkHandball(now) {
+    for (const p of this.players.values()) {
+      if (now < p.handballCooldownUntil) continue;
+      if (!collideBallWithArms(this.ball, p)) continue;
+
+      p.handballCooldownUntil = now + ACTIONS.HANDBALL_COOLDOWN_MS;
+      p.stunnedUntil = now + ACTIONS.FOUL_STUN_MS;
+      p.challenge = null;
+      if (this.ball.ownerId === p.id) this.ball.ownerId = null;
+
+      let nearest = null;
+      let bestDistSq = Infinity;
+      for (const rival of this.players.values()) {
+        if (rival.team === p.team) continue;
+        const dx = rival.pos.x - this.ball.pos.x;
+        const dz = rival.pos.z - this.ball.pos.z;
+        const d = dx * dx + dz * dz;
+        if (d < bestDistSq) {
+          bestDistSq = d;
+          nearest = rival;
+        }
+      }
+      if (nearest) {
+        this.ball.ownerId = nearest.id;
+        this.ball.capturedAt = now;
+        this.io.emit('possession', { id: nearest.id });
+      }
+      this.io.emit('foul', {
+        offender: p.id,
+        victim: nearest ? nearest.id : null,
+        type: 'handball',
+        stunMs: ACTIONS.FOUL_STUN_MS,
+      });
+    }
+  }
+
+  /** El balón sigue el punto de control frente a los pies del dueño. Devuelve 0 | 1 | -1 (gol). */
   dribble(dt, now) {
     const owner = this.players.get(this.ball.ownerId);
     if (!owner || now < owner.stunnedUntil) {
       this.ball.ownerId = null;
-      return;
+      return 0;
     }
     const dist = !owner.moving
       ? DRIBBLE.DIST_IDLE
@@ -219,34 +267,17 @@ export class GameRoom {
     // Si el dueño saltó o quedó lejos (lag/teleport), suelta el balón.
     const dx = ball.pos.x - owner.pos.x;
     const dz = ball.pos.z - owner.pos.z;
-    if (dx * dx + dz * dz > 6.25 || owner.pos.y > 0.6) this.ball.ownerId = null;
-  }
-
-  tryCapture(now) {
-    if (now < this.kickoffFreezeUntil) return;
-    const ball = this.ball;
-    if (ball.pos.y > DRIBBLE.MAX_CAPTURE_HEIGHT) return;
-    const speed = Math.hypot(ball.vel.x, ball.vel.z);
-    if (speed > DRIBBLE.MAX_CAPTURE_SPEED) return;
-
-    let best = null;
-    let bestDistSq = DRIBBLE.CONTROL_RADIUS * DRIBBLE.CONTROL_RADIUS;
-    for (const p of this.players.values()) {
-      if (now < p.stunnedUntil || now < p.captureLockUntil || p.pos.y > 0.4) continue;
-      if (now - p.lastKickAt < ACTIONS.RECAPTURE_DELAY_MS) continue; // no re-capturar el propio pase al instante
-      const dx = ball.pos.x - p.pos.x;
-      const dz = ball.pos.z - p.pos.z;
-      const d = dx * dx + dz * dz;
-      if (d < bestDistSq) {
-        bestDistSq = d;
-        best = p;
-      }
+    if (dx * dx + dz * dz > 6.25 || owner.pos.y > 0.6) {
+      this.ball.ownerId = null;
+      return 0;
     }
-    if (best) {
-      ball.ownerId = best.id;
-      ball.capturedAt = now;
-      this.io.emit('possession', { id: best.id });
-    }
+
+    // El balón conducido también puede cruzar la línea de gol o chocar
+    // con bandas/fondos — antes no se detectaba mientras había dueño.
+    const goal = checkGoalCrossing(ball);
+    if (goal !== 0) return goal;
+    clampToPitch(ball);
+    return 0;
   }
 
   /**

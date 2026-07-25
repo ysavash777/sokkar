@@ -19,7 +19,7 @@ export const BALL = {
   GROUND_RESTITUTION: 0.55,
   ROLL_FRICTION: 0.6, // frenado por segundo (factor exponencial)
   AIR_DRAG: 0.12,
-  MAX_SPEED: 30,
+  MAX_SPEED: 36,
 };
 
 export const PLAYER = {
@@ -29,10 +29,13 @@ export const PLAYER = {
   SPRINT_SPEED: 7.2,
   JUMP_SPEED: 7.5,
   GRAVITY: 20,
-  // Stamina: se agota sprintando y se recarga por completo en ~5 s.
-  STAMINA_MAX: 100,
-  STAMINA_DRAIN_PER_S: 28,
-  STAMINA_REGEN_PER_S: 20,
+  // Stamina: se agota sprintando; NO recarga mientras Shift esté presionado
+  // (evita el parpadeo trote/sprint al rozar el umbral). Recarga completa
+  // en ~5 s al soltar Shift; parado del todo recarga más rápido.
+  STAMINA_MAX: 115,
+  STAMINA_DRAIN_PER_S: 26,
+  STAMINA_REGEN_PER_S: 23,
+  STAMINA_REGEN_IDLE_MULT: 1.6,
   STAMINA_MIN_TO_SPRINT: 10,
 };
 
@@ -41,23 +44,25 @@ export const DRIBBLE = {
   DIST_IDLE: 0.5,
   DIST_JOG: 0.72,
   DIST_SPRINT: 1.15,
-  CONTROL_RADIUS: 1.25, // distancia para capturar un balón libre
-  MAX_CAPTURE_SPEED: 12, // el balón muy rápido no se controla al instante
-  MAX_CAPTURE_HEIGHT: 0.9,
   FOLLOW_RATE: 14, // qué tan rápido el balón persigue el punto de control
   CAPTURE_RAMP_S: 0.35, // rampa del seguimiento tras capturar (primer toque suave)
 };
 
 export const ACTIONS = {
   // Remate cargado: mantener clic izq llena la barra (SIN cooldown).
-  KICK_POWER: 18,
-  KICK_LIFT: 5.5,
+  // Curva de potencia no lineal: un toque suelto apenas empuja el balón
+  // ~1 m; solo cerca de la barra llena el remate se vuelve muy fuerte.
+  KICK_POWER: 34,
+  KICK_LIFT: 7,
   KICK_RANGE: 1.5,
-  KICK_MIN_POWER: 0.3,
+  KICK_MIN_POWER: 0.03,
+  KICK_CURVE: 1.8,
   KICK_CHARGE_TIME_MS: 900,
   RECAPTURE_DELAY_MS: 450, // quien patea no re-captura su propio pase al instante
 
-  // Cruzar pie (clic ruedita): extensión defensiva corta.
+  // Cruzar pie (clic ruedita): extensión defensiva corta. También es la
+  // única forma de "recibir" un balón libre (si no se usa, la pelota
+  // pasa entre las piernas sin colisión).
   EXTEND_REACH: 1.0,
   EXTEND_DURATION_MS: 350,
   EXTEND_COOLDOWN_MS: 900,
@@ -71,6 +76,10 @@ export const ACTIONS = {
   STEAL_RADIUS: 0.62, // el pie debe conectar realmente con la pelota
   FOUL_RADIUS: 0.48, // radio de las piernas del rival para cobrar falta
   FOUL_STUN_MS: 3000,
+
+  // Mano: contacto del balón con el brazo (entre hombro y mano), en
+  // cualquier animación (salto, barrida, etc.). Siempre falta.
+  HANDBALL_COOLDOWN_MS: 1500,
 };
 
 export const NET = {

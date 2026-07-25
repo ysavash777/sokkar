@@ -14,11 +14,20 @@ Entrás con un nickname y ya estás en la partida.
 | `Shift` | Sprint (stamina, recarga completa en ~5 s) |
 | `Espacio` | Salto |
 | `Clic izquierdo (mantener)` | Cargar remate: barra de poder + línea de dirección según la cámara; se dispara al soltar (sin cooldown) |
-| `Clic ruedita` | Cruzar pie (robo defensivo corto) |
+| `Clic ruedita` | Cruzar pie — también es la forma de **recibir/controlar** un balón libre |
 | `Clic derecho` | Barrida |
 
-> Cruzar pie y barrida: si el pie conecta con la **pelota**, la robás.
-> Si conecta con la **pierna del rival**, es **falta** (3 s aturdido).
+> Cruzar pie y barrida: si el pie conecta con la **pelota**, la robás (o la
+> controlás, si estaba libre). Si conecta con la **pierna del rival**, es
+> **falta** (3 s aturdido). El balón libre no se pega solo: si no cruzás
+> el pie, te atraviesa como si pasara entre las piernas.
+>
+> Si el balón toca tu **brazo** (entre hombro y mano) en cualquier
+> momento —salto, barrida, lo que sea— es **mano**: falta automática.
+>
+> Sprintar agota la stamina; **no recarga mientras sigas apretando Shift**,
+> aunque ya no puedas sprintar. Soltalo para que vuelva a cargar (más
+> rápido si estás parado del todo).
 
 ## Correr en local
 

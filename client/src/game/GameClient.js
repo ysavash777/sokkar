@@ -100,8 +100,10 @@ export class GameClient {
 
     net.on('foul', (data) => {
       const offender = this.nicknames.get(data.offender) ?? '???';
-      const victim = this.nicknames.get(data.victim) ?? '???';
-      this.hud.message(`¡FALTA de ${offender} sobre ${victim}!`, 'foul');
+      const victim = data.victim ? (this.nicknames.get(data.victim) ?? '???') : null;
+      const label = data.type === 'handball' ? 'MANO' : 'FALTA';
+      const msg = victim ? `¡${label} de ${offender} sobre ${victim}!` : `¡${label} de ${offender}!`;
+      this.hud.message(msg, 'foul');
       if (data.offender === this.myId) {
         this.local.stunnedUntil = performance.now() + data.stunMs;
       }
@@ -168,7 +170,10 @@ export class GameClient {
         this.kickCharge = Math.min(1, this.kickCharge + (dt * 1000) / ACTIONS.KICK_CHARGE_TIME_MS);
       }
       if (this.input.consume('kickRelease')) {
-        const power = ACTIONS.KICK_MIN_POWER + (1 - ACTIONS.KICK_MIN_POWER) * this.kickCharge;
+        // Curva no lineal: un toque suelto empuja apenas el balón (~1 m);
+        // recién cerca de la barra llena el remate se vuelve muy fuerte.
+        const curved = Math.pow(this.kickCharge, ACTIONS.KICK_CURVE);
+        const power = ACTIONS.KICK_MIN_POWER + (1 - ACTIONS.KICK_MIN_POWER) * curved;
         this.net.sendKick(this.cameraCtrl.yaw, power);
         L.anim = ANIM.KICK;
         L.actionUntil = now + 350;
@@ -216,6 +221,8 @@ export class GameClient {
     let moveX = 0;
     let moveZ = 0;
     let speed = 0;
+    let axisPresent = false;
+    const shiftHeld = this.input.sprint;
 
     if (sliding) {
       // La barrida es un lunge sin control de dirección.
@@ -225,7 +232,15 @@ export class GameClient {
       moveZ = Math.cos(L.slideDir);
     } else if (!stunned) {
       const axis = this.input.moveAxis;
-      if (axis.x !== 0 || axis.z !== 0) {
+      axisPresent = axis.x !== 0 || axis.z !== 0;
+
+      // Solo puede sprintar si sigue habiendo stamina por ENCIMA del umbral.
+      // Al agotarse, vuelve a trote — y no puede re-sprintar hasta soltar
+      // Shift (evita el parpadeo trote/sprint al rozar el umbral).
+      const wantsSprint = shiftHeld && axisPresent && L.stamina > PLAYER.STAMINA_MIN_TO_SPRINT;
+      L.sprinting = wantsSprint;
+
+      if (axisPresent) {
         // WASD relativo al yaw de la cámara.
         // forward = (sin, cos); right en pantalla = (-cos, sin).
         const camYaw = this.cameraCtrl.yaw;
@@ -234,25 +249,22 @@ export class GameClient {
         const nz = axis.z / len;
         moveX = -nx * Math.cos(camYaw) + nz * Math.sin(camYaw);
         moveZ = nx * Math.sin(camYaw) + nz * Math.cos(camYaw);
-
-        const wantsSprint = this.input.sprint && L.stamina > PLAYER.STAMINA_MIN_TO_SPRINT;
-        L.sprinting = wantsSprint;
         speed = wantsSprint ? PLAYER.SPRINT_SPEED : PLAYER.WALK_SPEED;
 
         // Estilo strafe: el cuerpo mantiene el frente hacia la cámara;
         // moverse al costado es un desplazamiento lateral, no un giro.
         L.yaw = lerpAngle(L.yaw, camYaw, 1 - Math.exp(-14 * dt));
-      } else {
-        L.sprinting = false;
       }
     }
 
-    // Stamina: drena al sprintar, recarga completa en ~5 s.
-    if (L.sprinting && speed > 0 && !sliding) {
+    // Stamina: drena solo al sprintar de verdad. NO recarga mientras Shift
+    // siga presionado (aunque ya no se pueda sprintar) — hay que soltarlo.
+    // Parado del todo (sin ejes ni Shift) recarga más rápido.
+    if (L.sprinting) {
       L.stamina = Math.max(0, L.stamina - PLAYER.STAMINA_DRAIN_PER_S * dt);
-      if (L.stamina <= 0) L.sprinting = false;
-    } else {
-      L.stamina = Math.min(PLAYER.STAMINA_MAX, L.stamina + PLAYER.STAMINA_REGEN_PER_S * dt);
+    } else if (!shiftHeld && !sliding && !stunned) {
+      const idleBonus = axisPresent ? 1 : PLAYER.STAMINA_REGEN_IDLE_MULT;
+      L.stamina = Math.min(PLAYER.STAMINA_MAX, L.stamina + PLAYER.STAMINA_REGEN_PER_S * idleBonus * dt);
     }
     this.hud.setStamina(L.stamina / PLAYER.STAMINA_MAX);
 
