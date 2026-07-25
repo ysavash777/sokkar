@@ -38,9 +38,21 @@ selector. No hace falta tocar código.
 > justo. El balón libre no se pega solo: si no cruzás el pie, te
 > atraviesa como si pasara entre las piernas.
 >
-> Remate: un toque suelto adelanta la pelota ~1 m, media barra ~2 m, y de
-> ahí a barra llena crece hasta el cañonazo. Correr de espaldas es más
-> lento que de frente.
+> Toda falta se cobra distinguiendo bien quién chocó con qué: si el rival
+> te bloquea el camino a la pelota (por ejemplo barriéndote por detrás,
+> donde es físicamente imposible llegar a tocarla), siempre es falta —
+> nunca roba por casualidad. El infractor en barrida queda tendido en el
+> piso y se levanta como al final de una barrida normal; la víctima sale
+> despedida en la dirección del golpe.
+>
+> Remate: la barra está adelantada — con solo ~20 % ya sentís un remate
+> fuerte de verdad (antes hacía falta cargar ~80 %); de ahí sigue
+> creciendo hasta el cañonazo a barra llena. Un toque bien suelto sigue
+> siendo apenas un empujón de ~1 m. Correr de espaldas es más lento que
+> de frente, y arrancar a moverse o frenar tiene una breve inercia
+> (aceleración/desaceleración, no es instantáneo).
+>
+> Los jugadores no se atraviesan entre sí — colisión de cuerpo precisa.
 >
 > Si el balón toca tu **brazo** (entre hombro y mano) en cualquier
 > momento —salto, barrida, lo que sea— es **mano**: falta automática.

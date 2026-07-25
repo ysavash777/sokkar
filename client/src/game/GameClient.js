@@ -42,6 +42,10 @@ export class GameClient {
       slideDir: 0,
       slideCdUntil: 0,
       curSpeed: 0, // velocidad real (con inercia); nunca se muestra en el HUD
+      groundUntil: 0, // infractor en falta de barrida: tendido antes de pararse
+      knockedUntil: 0, // víctima de una falta: cayendo por el empujón
+      knockDirX: 0,
+      knockDirZ: 0,
     };
     this.ballOwnerId = null;
     this.sendAccumulator = 0;
@@ -115,8 +119,24 @@ export class GameClient {
       const label = data.type === 'handball' ? 'MANO' : 'FALTA';
       const msg = victim ? `¡${label} de ${offender} sobre ${victim}!` : `¡${label} de ${offender}!`;
       this.hud.message(msg, 'foul');
+
+      const now = performance.now();
       if (data.offender === this.myId) {
-        this.local.stunnedUntil = performance.now() + data.stunMs;
+        this.local.stunnedUntil = now + data.stunMs;
+        if (data.type === 'slide') {
+          // Corta el lunge ya mismo y queda tendido un rato antes de
+          // pararse, como el final de una barrida normal — en vez de
+          // saltar de golpe a la pose de aturdido de pie.
+          this.local.slideUntil = now;
+          this.local.groundUntil = now + ACTIONS.FOUL_GROUND_MS;
+        }
+      }
+      if (data.victim === this.myId && Array.isArray(data.dir)) {
+        // Cae empujado en la dirección del golpe (velocidad del infractor).
+        this.local.knockedUntil = now + ACTIONS.KNOCKBACK_MS;
+        this.local.knockDirX = data.dir[0];
+        this.local.knockDirZ = data.dir[1];
+        this.local.yaw = Math.atan2(data.dir[0], data.dir[1]);
       }
     });
 
@@ -168,13 +188,15 @@ export class GameClient {
     const stunned = now < L.stunnedUntil;
     const sliding = now < L.slideUntil;
     const inAction = now < L.actionUntil;
+    const grounded = now < L.groundUntil; // infractor de barrida, tendido
+    const knocked = now < L.knockedUntil; // víctima de falta, cayendo
 
     // Cámara 360 (no rota al personaje).
     const md = this.input.consumeMouseDelta();
     this.cameraCtrl.applyMouseDelta(md.x, md.y);
 
     // ---- acciones
-    if (!stunned && !sliding) {
+    if (!stunned && !sliding && !knocked) {
       // Remate cargado (sin cooldown): mantener clic izq llena la barra
       // y muestra la línea de dirección según la cámara.
       if (this.input.kickHeld) {
@@ -217,7 +239,7 @@ export class GameClient {
     }
 
     // Línea de puntería + barra de poder mientras se carga el remate.
-    const charging = this.input.kickHeld && !stunned && !sliding;
+    const charging = this.input.kickHeld && !stunned && !sliding && !knocked;
     this.aimLine.visible = charging;
     if (charging) {
       const len = 3.5 + this.kickCharge * 8.5;
@@ -234,7 +256,14 @@ export class GameClient {
     let axisPresent = false;
     const shiftHeld = this.input.sprint;
 
-    if (sliding) {
+    if (knocked) {
+      // Empujón de la falta: sin control, cae en la dirección del golpe
+      // con velocidad decayendo (igual patrón que el lunge de la barrida).
+      const t = (L.knockedUntil - now) / ACTIONS.KNOCKBACK_MS;
+      L.curSpeed = ACTIONS.KNOCKBACK_SPEED * t;
+      moveX = L.knockDirX;
+      moveZ = L.knockDirZ;
+    } else if (sliding) {
       // La barrida es un lunge sin control de dirección (velocidad propia,
       // sin pasar por la aceleración de trote/sprint).
       const t = (L.slideUntil - now) / ACTIONS.SLIDE_DURATION_MS;
@@ -292,7 +321,7 @@ export class GameClient {
     // Parado del todo (sin ejes ni Shift) recarga más rápido.
     if (L.sprinting) {
       L.stamina = Math.max(0, L.stamina - PLAYER.STAMINA_DRAIN_PER_S * dt);
-    } else if (!shiftHeld && !sliding && !stunned) {
+    } else if (!shiftHeld && !sliding && !stunned && !knocked) {
       const idleBonus = axisPresent ? 1 : PLAYER.STAMINA_REGEN_IDLE_MULT;
       L.stamina = Math.min(PLAYER.STAMINA_MAX, L.stamina + PLAYER.STAMINA_REGEN_PER_S * idleBonus * dt);
     }
@@ -300,6 +329,28 @@ export class GameClient {
 
     L.pos.x += moveX * speed * dt;
     L.pos.z += moveZ * speed * dt;
+
+    // Colisión con otros jugadores: no se atraviesan (predicción local;
+    // el servidor la resuelve de forma autoritativa para lo que ven los
+    // demás). Se excluye a quien está saltando o barriéndose — ese
+    // contacto lo maneja el sistema de faltas, no un empujón genérico.
+    if (L.pos.y < 0.5) {
+      for (const [id, ch] of this.characters) {
+        if (id === this.myId || !ch.ready) continue;
+        if (ch.animState === ANIM.SLIDE || ch.group.position.y > 0.5) continue;
+        const dx = L.pos.x - ch.group.position.x;
+        const dz = L.pos.z - ch.group.position.z;
+        const minDist = PLAYER.RADIUS * 2;
+        const distSq = dx * dx + dz * dz;
+        if (distSq < minDist * minDist && distSq > 1e-6) {
+          const dist = Math.sqrt(distSq);
+          const push = minDist - dist;
+          L.pos.x += (dx / dist) * push;
+          L.pos.z += (dz / dist) * push;
+        }
+      }
+    }
+
     // Los jugadores viven DENTRO de la cancha: nadie rodea el arco por fuera.
     L.pos.x = THREE.MathUtils.clamp(L.pos.x, -HALF_L + 0.4, HALF_L - 0.4);
     L.pos.z = THREE.MathUtils.clamp(L.pos.z, -HALF_W + 0.4, HALF_W - 0.4);
@@ -316,7 +367,11 @@ export class GameClient {
     }
 
     // ---- estado de animación
-    if (stunned) L.anim = ANIM.STUNNED;
+    // Prioridad: cayendo por el golpe > tendido tras cometer la falta >
+    // aturdido de pie > barrida > acción en curso > salto > movimiento.
+    if (knocked) L.anim = ANIM.KNOCKED;
+    else if (grounded) L.anim = ANIM.SLIDE; // tendido, misma pose que la barrida
+    else if (stunned) L.anim = ANIM.STUNNED;
     else if (sliding) L.anim = ANIM.SLIDE;
     else if (inAction && (L.anim === ANIM.KICK || L.anim === ANIM.EXTEND)) {
       /* mantener pose de acción */

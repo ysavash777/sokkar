@@ -177,7 +177,7 @@ en ~5 s. Bajo el 10 % no se puede sprintar (evita spam de micro-sprints).
 ### Cruzar pie (clic ruedita) y barrida (clic derecho)
 
 Ambos se resuelven **en el servidor** durante la ventana activa de la
-acción, con prioridad pelota → rival:
+acción:
 
 - **Cruzar pie** (SIN cooldown, spameable o cronometrado): si la pelota
   está dentro del **cilindro de control** alrededor del jugador —círculo
@@ -191,7 +191,27 @@ acción, con prioridad pelota → rival:
   → solo lo **despoja** (balón suelto con un empujón corto). Si contacta
   al rival — pie o **cuerpo** deslizándose (`SLIDE_BODY_FOUL_RADIUS`) —
   es **falta**.
-- Toda falta aturde al infractor 3 s y la víctima retiene/recibe el balón.
+- Toda falta aturde al infractor 3 s y la víctima cae empujada.
+
+#### Prioridad pelota vs. rival, y oclusión de cuerpo
+
+`resolveChallenge` compara la distancia² del intento a la pelota contra
+la distancia² al rival más cercano — **gana lo que el pie/cuerpo alcanza
+primero**, nunca "la pelota por default". Antes se chequeaba la pelota
+sin condición alguna antes que al rival, así que una barrida por detrás
+—donde el cuerpo del rival bloquea el camino hacia el balón— a veces
+resolvía como robo de todos modos, con resultados inconsistentes entre
+intentos casi idénticos.
+
+Además, sobre ese resultado por distancia se aplica un chequeo de
+**oclusión**: si el rival alcanzado queda sobre la línea recta entre el
+jugador y la pelota (proyección + distancia perpendicular < ~0.7 m,
+radios de cuerpo y pelota), la falta gana **siempre**, sin importar qué
+distancia haya dado más corta. Hace falta porque con el rival parado y
+la pelota a la distancia de reposo de sus pies (`DIST_IDLE`), el punto
+de alcance del pie puede caer justo a mitad de camino entre ambos y
+empatar las dos distancias — sin la oclusión, ese empate podía resolver
+como robo en vez de falta.
 
 ### Física de la barrida contra el balón libre
 
@@ -227,9 +247,16 @@ El balón sale **siempre desde adelante del pateador, en su último punto**:
 el cliente envía su posición junto al kick (validada contra teleports) y
 el servidor recoloca el balón en `pos + forward * DIST_JOG` antes de
 aplicar el impulso — sin esto, al patear en sprint el balón salía ~2 pasos
-atrás por el lag del snapshot. La potencia es por tramos: toque suelto
-→ el balón se adelanta ~1 m; media barra → ~2 m; de media a llena escala
-con `KICK_CURVE` hasta `KICK_POWER` (remate real).
+atrás por el lag del snapshot.
+
+La potencia está **muy adelantada**: con la barra recién empezada
+(`KICK_PIVOT_CHARGE`, ~20 %) el remate ya "se siente" fuerte de verdad
+(`KICK_PIVOT_SPEED`) — antes hacía falta cargar ~75-80 % para sentir algo,
+ese mismo punch ahora se siente a los ~20 %. De ahí a la barra llena sigue
+creciendo hasta el máximo (`KICK_POWER`, sin cambios — ya estaba bien).
+Es una curva de dos tramos: `[0, PIVOT]` con ease-in cuadrático (el toque
+mínimo se mantiene suave, ~1 m) y `[PIVOT, 1]` con crecimiento sostenido
+(exponente `KICK_CURVE` bajo) hasta el tope.
 
 ### Colisiones del balón conducido y confinamiento
 
@@ -238,6 +265,34 @@ Mientras se conduce, el balón respeta bandas, fondos y la red del arco
 están **confinados a la cancha** (clamps de cliente y servidor), así que
 no se puede rodear el arco y meter el balón "desde afuera"; conducir el
 balón cruzando la línea de gol de frente sigue siendo gol.
+
+### Colisión entre jugadores
+
+Nadie se atraviesa: cada tick del servidor (`resolvePlayerCollisions`)
+separa a todos los pares de jugadores superpuestos con un push-apart
+círculo-círculo preciso sobre `PLAYER.RADIUS` (`resolvePlayerCollision`
+en `physics.js`), y el cliente predice lo mismo contra sus vecinos para
+que se sienta inmediato. Se excluye a quien está en el aire (saltando) o
+**barriéndose** — ese contacto lo resuelve el sistema de faltas, no un
+empujón genérico, para no interferir con el lunge.
+
+### Falta física: el infractor cae y se levanta, la víctima sale despedida
+
+Antes, al cometer falta en barrida, el personaje saltaba de golpe a la
+pose de aturdido de pie — como si abrazara al rival — mientras el lunge
+seguía trasladándolo. Ahora:
+
+- **Infractor** (solo en faltas de barrida): el lunge se corta al
+  instante (`local.slideUntil = now`) y queda **tendido** (misma pose que
+  la barrida) durante `FOUL_GROUND_MS`, recién ahí pasa a la pose de
+  aturdido de pie por el resto de `FOUL_STUN_MS` — como el final de una
+  barrida normal, no un salto brusco.
+- **Víctima**: recibe un empujón (`ANIM.KNOCKED`, sin control de WASD)
+  en la dirección del golpe durante `KNOCKBACK_MS`, a velocidad
+  `KNOCKBACK_SPEED` decayendo. La dirección es la del movimiento del
+  infractor si venía corriendo, o si estaba quieto, la línea
+  infractor → víctima; el evento `foul` viaja con `dir`/`speed` para que
+  el cliente de la víctima lo aplique.
 
 ## Optimización (anti-lag)
 

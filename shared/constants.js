@@ -57,14 +57,15 @@ export const DRIBBLE = {
 
 export const ACTIONS = {
   // Remate cargado: mantener clic izq llena la barra (SIN cooldown).
-  // Potencia por tramos (velocidad inicial del balón):
-  //   toque suelto -> el balón se adelanta ~1 m
-  //   media barra  -> ~2 m
-  //   barra llena  -> remate a plena potencia (KICK_POWER)
-  KICK_POWER: 40,
-  KICK_TAP_SPEED: 0.72, // velocidad del toque mínimo (~1 m rodando)
-  KICK_MID_SPEED: 1.45, // velocidad a media barra (~2 m rodando)
-  KICK_CURVE: 1.8, // exponente del tramo superior (mitad -> llena)
+  // Potencia por tramos MUY adelantada: casi al toque (KICK_PIVOT_CHARGE)
+  // ya se siente un remate fuerte (KICK_PIVOT_SPEED); de ahí a la barra
+  // llena sigue creciendo hasta KICK_POWER (el único tramo que ya estaba bien).
+  KICK_POWER: 40, // velocidad a barra llena (charge = 1)
+  KICK_MIN_SPEED: 0.72, // velocidad con la barra recién empezada (toque ~1 m)
+  KICK_PIVOT_CHARGE: 0.2, // a partir de acá el remate ya "se siente"
+  KICK_PIVOT_SPEED: 15, // velocidad en KICK_PIVOT_CHARGE
+  KICK_LOW_CURVE: 2, // exponente del tramo [0, PIVOT]: ease-in suave (toque sigue siendo toque)
+  KICK_CURVE: 1.15, // exponente del tramo [PIVOT, 1]: crecimiento sostenido hasta el máximo
   KICK_LIFT: 8,
   KICK_RANGE: 1.5,
   KICK_CHARGE_TIME_MS: 900,
@@ -90,10 +91,16 @@ export const ACTIONS = {
   STEAL_RADIUS: 0.62, // el pie debe conectar realmente con la pelota
   FOUL_RADIUS: 0.48, // radio de las piernas del rival para cobrar falta
   FOUL_STUN_MS: 3000,
+  FOUL_GROUND_MS: 700, // el infractor en barrida queda tendido antes de pararse
 
   // Mano: contacto del balón con el brazo (entre hombro y mano), en
   // cualquier animación (salto, barrida, etc.). Siempre falta.
   HANDBALL_COOLDOWN_MS: 1500,
+
+  // Empujón que recibe la víctima de una falta física (no la de mano):
+  // cae en la dirección del impacto (velocidad/posición del infractor).
+  KNOCKBACK_SPEED: 6,
+  KNOCKBACK_MS: 450,
 };
 
 export const NET = {
@@ -114,6 +121,7 @@ export const ANIM = {
   EXTEND: 5,
   SLIDE: 6,
   STUNNED: 7,
+  KNOCKED: 8, // víctima de una falta, cayendo por el impacto
 };
 
 export const TEAM_COLORS = [0xd63b3b, 0x2f6fd6]; // rojo vs azul

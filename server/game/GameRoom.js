@@ -13,6 +13,8 @@ import {
   collideBallWithSlidingBody,
   checkGoalCrossing,
   clampToPitch,
+  clampPlayerToPitch,
+  resolvePlayerCollision,
 } from './physics.js';
 
 const HALF_L = FIELD.LENGTH / 2;
@@ -128,9 +130,10 @@ export class GameRoom {
 
     // Clamps anti-trampa: los jugadores viven DENTRO de la cancha (así
     // nadie puede rodear el arco y meter el balón "desde afuera").
-    p.pos.x = Math.max(-HALF_L + 0.3, Math.min(HALF_L - 0.3, x));
+    p.pos.x = x;
     p.pos.y = Math.max(0, Math.min(4, y));
-    p.pos.z = Math.max(-HALF_W + 0.3, Math.min(HALF_W - 0.3, z));
+    p.pos.z = z;
+    clampPlayerToPitch(p);
     p.yaw = yaw;
     p.anim = anim | 0;
     p.sprinting = !!sprinting;
@@ -191,16 +194,21 @@ export class GameRoom {
       clampToPitch(ball);
     }
 
-    // Potencia por tramos: toque ~1 m, media barra ~2 m, llena = remate real.
+    // Potencia por tramos, MUY adelantada: con la barra recién empezada
+    // (KICK_PIVOT_CHARGE, ~20%) el remate ya "se siente" fuerte de verdad
+    // (KICK_PIVOT_SPEED); de ahí a la barra llena sigue creciendo hasta
+    // el máximo (KICK_POWER). Antes hacía falta cargar ~80% para sentir
+    // algo — ahora ese mismo punch se siente a los ~20%.
     let speed;
-    if (charge <= 0.5) {
-      speed = ACTIONS.KICK_TAP_SPEED + (ACTIONS.KICK_MID_SPEED - ACTIONS.KICK_TAP_SPEED) * (charge / 0.5);
+    if (charge <= ACTIONS.KICK_PIVOT_CHARGE) {
+      const t = charge / ACTIONS.KICK_PIVOT_CHARGE;
+      speed = ACTIONS.KICK_MIN_SPEED + (ACTIONS.KICK_PIVOT_SPEED - ACTIONS.KICK_MIN_SPEED) * Math.pow(t, ACTIONS.KICK_LOW_CURVE);
     } else {
-      const t = (charge - 0.5) / 0.5;
-      speed = ACTIONS.KICK_MID_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_MID_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
+      const t = (charge - ACTIONS.KICK_PIVOT_CHARGE) / (1 - ACTIONS.KICK_PIVOT_CHARGE);
+      speed = ACTIONS.KICK_PIVOT_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_PIVOT_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
     }
-    // Elevación solo en remates fuertes (los toques ruedan al ras).
-    const liftT = Math.max(0, (charge - 0.4) / 0.6);
+    // Elevación: aparece apenas se sale del toque mínimo.
+    const liftT = Math.max(0, (charge - 0.1) / 0.9);
     p.lastKickAt = now;
     ball.ownerId = null;
     ball.vel.x = Math.sin(dirYaw) * speed;
@@ -230,11 +238,36 @@ export class GameRoom {
     p.challenge = { type: 'extend', until: now + ACTIONS.EXTEND_DURATION_MS, resolved: false };
   }
 
+  /**
+   * Colisión cuerpo a cuerpo entre todos los jugadores (círculo-círculo,
+   * precisa): nadie se atraviesa. Se excluye a quien está en el aire
+   * (salto) y a quien está barriéndose — ese contacto lo resuelve el
+   * sistema de faltas (resolveChallenge), no un empujón genérico.
+   */
+  resolvePlayerCollisions(now) {
+    const list = [...this.players.values()];
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      if (a.pos.y > 0.5 || (a.challenge?.type === 'slide' && now < a.challenge.until)) continue;
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        if (b.pos.y > 0.5 || (b.challenge?.type === 'slide' && now < b.challenge.until)) continue;
+        if (resolvePlayerCollision(a, b, PLAYER.RADIUS)) {
+          clampPlayerToPitch(a);
+          clampPlayerToPitch(b);
+        }
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- tick
 
   tick(dt) {
     const now = Date.now();
     const ball = this.ball;
+
+    // Los jugadores no se atraviesan entre sí (círculo-círculo, precisa).
+    this.resolvePlayerCollisions(now);
 
     // Mano: DESACTIVADA por el momento (contacto del balón con el brazo,
     // hombro a mano). Método intacto en checkHandball() para reactivarla
@@ -359,14 +392,24 @@ export class GameRoom {
   }
 
   /**
-   * Regla de cruzar pie / barrida:
-   *  1) Si conecta con la PELOTA:
+   * Regla de cruzar pie / barrida — SIEMPRE gana lo que el pie/cuerpo
+   * alcanza PRIMERO (la menor distancia real), nunca "la pelota por
+   * default". Antes se chequeaba la pelota incondicionalmente antes que
+   * al rival, así que una barrida por detrás —donde el cuerpo del rival
+   * bloquea el camino hacia el balón— a veces resolvía como robo igual;
+   * comparar distancias hace que un rival en el medio directamente
+   * bloquee el alcance a la pelota, con resultado consistente siempre.
+   *
+   *  - Pelota alcanzada:
    *     - Cruzar pie: la controla/roba (queda pegada) si está dentro del
-   *       área de control circular alrededor del jugador (cualquier ángulo).
+   *       cilindro de control alrededor del jugador (cualquier ángulo).
    *     - Barrida: NO controla — solo DESPOJA: el balón queda suelto con
    *       un empujón corto (contacto pie-balón del lunge).
-   *  2) Si en cambio conecta con el RIVAL -> falta (en la barrida cuenta
-   *     también el contacto de cuerpo, no solo el pie).
+   *  - Rival alcanzado (pie extendido, o en la barrida también el cuerpo
+   *    entero deslizándose) -> falta: el infractor queda tendido y luego
+   *    se levanta; la víctima cae empujada en la dirección del golpe
+   *    (velocidad del infractor si venía corriendo, si no la línea
+   *    infractor -> víctima).
    */
   resolveChallenge(p, now) {
     const c = p.challenge;
@@ -375,29 +418,85 @@ export class GameRoom {
     const footZ = p.pos.z + Math.cos(p.yaw) * reach;
     const ball = this.ball;
 
-    // 1) ¿Conecta con la pelota?
-    let touchesBall = false;
+    // Distancia² de la pelota al pie/área, solo si es alcanzable.
+    let ballDistSq = Infinity;
     if (ball.ownerId !== p.id) {
       if (c.type === 'extend') {
-        // Área de control: CILINDRO de pies a cabeza centrado en el
-        // jugador (360°) — controla también balones que llegan
-        // "volando" bajo, no solo los que ya están en el piso.
+        // Cilindro de pies a cabeza centrado en el jugador (360°).
         const dx = ball.pos.x - p.pos.x;
         const dz = ball.pos.z - p.pos.z;
-        const inRadius = dx * dx + dz * dz < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS;
-        const inHeight = ball.pos.y < ACTIONS.CONTROL_AREA_HEIGHT;
-        touchesBall = inRadius && inHeight;
-      } else if (ball.pos.y < 0.9) {
+        const d = dx * dx + dz * dz;
+        if (d < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS && ball.pos.y < ACTIONS.CONTROL_AREA_HEIGHT) {
+          ballDistSq = d;
+        }
+      } else if (ball.ownerId && ball.pos.y < 0.9) {
         // Barrida: lunge a ras de piso, solo contra un balón CONTROLADO
         // por un rival (el balón libre rebota contra el cuerpo en el tick).
-        if (ball.ownerId) {
-          const bdx = ball.pos.x - footX;
-          const bdz = ball.pos.z - footZ;
-          touchesBall = bdx * bdx + bdz * bdz < ACTIONS.STEAL_RADIUS * ACTIONS.STEAL_RADIUS;
+        const bdx = ball.pos.x - footX;
+        const bdz = ball.pos.z - footZ;
+        const d = bdx * bdx + bdz * bdz;
+        if (d < ACTIONS.STEAL_RADIUS * ACTIONS.STEAL_RADIUS) ballDistSq = d;
+      }
+    }
+
+    // Rival más cercano al pie/cuerpo, si hay contacto real.
+    let bestRival = null;
+    let bestRivalDistSq = Infinity;
+    for (const rival of this.players.values()) {
+      if (rival.team === p.team || rival.id === p.id || rival.pos.y >= 0.6) continue;
+
+      const fdx = rival.pos.x - footX;
+      const fdz = rival.pos.z - footZ;
+      let d = fdx * fdx + fdz * fdz;
+      let within = d < ACTIONS.FOUL_RADIUS * ACTIONS.FOUL_RADIUS;
+
+      // En la barrida el CUERPO deslizándose también comete falta, no
+      // solo el pie del lunge — se usa el contacto más cercano de los dos.
+      if (c.type === 'slide') {
+        const bdx = rival.pos.x - p.pos.x;
+        const bdz = rival.pos.z - p.pos.z;
+        const bd = bdx * bdx + bdz * bdz;
+        if (bd < ACTIONS.SLIDE_BODY_FOUL_RADIUS * ACTIONS.SLIDE_BODY_FOUL_RADIUS && bd < d) {
+          d = bd;
+          within = true;
+        }
+      }
+      if (within && d < bestRivalDistSq) {
+        bestRivalDistSq = d;
+        bestRival = rival;
+      }
+    }
+
+    if (ballDistSq === Infinity && bestRival === null) return; // nada al alcance todavía
+
+    // Oclusión: si el cuerpo del rival alcanzado está sobre la línea recta
+    // entre el jugador y la pelota, bloquea el camino — el pie no puede
+    // "saltarlo" para tocarla, sin importar qué distancia dé más corta.
+    // (Sin esto, con el rival parado y la pelota a la distancia de reposo
+    // de sus pies, el punto de alcance del pie puede caer justo a mitad de
+    // camino entre ambos y empatar las dos distancias, dando resultados
+    // inconsistentes entre intentos casi idénticos.)
+    let occluded = false;
+    if (bestRival && ballDistSq !== Infinity) {
+      const toBallX = ball.pos.x - p.pos.x;
+      const toBallZ = ball.pos.z - p.pos.z;
+      const lenSq = toBallX * toBallX + toBallZ * toBallZ;
+      if (lenSq > 1e-6) {
+        const t = ((bestRival.pos.x - p.pos.x) * toBallX + (bestRival.pos.z - p.pos.z) * toBallZ) / lenSq;
+        if (t > -0.1 && t < 1.1) {
+          const cx = p.pos.x + toBallX * Math.max(0, Math.min(1, t));
+          const cz = p.pos.z + toBallZ * Math.max(0, Math.min(1, t));
+          const dx = bestRival.pos.x - cx;
+          const dz = bestRival.pos.z - cz;
+          occluded = dx * dx + dz * dz < 0.49; // corredor de ~0.7 m (radios de cuerpo + pelota)
         }
       }
     }
-    if (touchesBall) {
+
+    // Gana lo que está MÁS CERCA del pie/cuerpo — salvo que el rival
+    // alcanzado ocluya directamente el camino a la pelota, en cuyo caso
+    // la falta gana siempre.
+    if (!occluded && ballDistSq <= bestRivalDistSq) {
       const prevOwner = this.players.get(ball.ownerId);
       c.resolved = true;
       // El rival despojado no puede re-capturar al instante: el despojo debe "quedarse".
@@ -423,41 +522,43 @@ export class GameRoom {
       return;
     }
 
-    // 2) ¿Conecta con un rival (sin haber tocado la pelota)?
-    for (const rival of this.players.values()) {
-      if (rival.team === p.team || rival.id === p.id) continue;
-      if (rival.pos.y >= 0.6) continue;
-
-      // Pie extendido / pie del lunge.
-      const fdx = rival.pos.x - footX;
-      const fdz = rival.pos.z - footZ;
-      let contact = fdx * fdx + fdz * fdz < ACTIONS.FOUL_RADIUS * ACTIONS.FOUL_RADIUS;
-
-      // En la barrida el CUERPO deslizándose también comete falta.
-      if (!contact && c.type === 'slide') {
-        const bdx = rival.pos.x - p.pos.x;
-        const bdz = rival.pos.z - p.pos.z;
-        contact = bdx * bdx + bdz * bdz < ACTIONS.SLIDE_BODY_FOUL_RADIUS * ACTIONS.SLIDE_BODY_FOUL_RADIUS;
-      }
-      if (!contact) continue;
-
-      c.resolved = true;
-      p.stunnedUntil = now + ACTIONS.FOUL_STUN_MS;
-      p.challenge = null;
-      // Si la víctima tenía el balón, lo conserva; si era libre, se lo queda.
-      if (!this.ball.ownerId || this.ball.ownerId === p.id) {
-        this.ball.ownerId = rival.id;
-        this.ball.capturedAt = now;
-        this.io.emit('possession', { id: rival.id });
-      }
-      this.io.emit('foul', {
-        offender: p.id,
-        victim: rival.id,
-        type: c.type,
-        stunMs: ACTIONS.FOUL_STUN_MS,
-      });
-      return;
+    // Falta.
+    const rival = bestRival;
+    c.resolved = true;
+    p.stunnedUntil = now + ACTIONS.FOUL_STUN_MS;
+    p.challenge = null;
+    // Si la víctima tenía el balón, lo conserva; si era libre, se lo queda.
+    if (!this.ball.ownerId || this.ball.ownerId === p.id) {
+      this.ball.ownerId = rival.id;
+      this.ball.capturedAt = now;
+      this.io.emit('possession', { id: rival.id });
     }
+
+    // Dirección del golpe para el empujón de la víctima: la del
+    // movimiento del infractor si venía corriendo, si no la línea
+    // infractor -> víctima.
+    const offenderSpeed = Math.hypot(p.vel.x, p.vel.z);
+    let dirX;
+    let dirZ;
+    if (offenderSpeed > 0.5) {
+      dirX = p.vel.x / offenderSpeed;
+      dirZ = p.vel.z / offenderSpeed;
+    } else {
+      const dx = rival.pos.x - p.pos.x;
+      const dz = rival.pos.z - p.pos.z;
+      const d = Math.hypot(dx, dz) || 1;
+      dirX = dx / d;
+      dirZ = dz / d;
+    }
+
+    this.io.emit('foul', {
+      offender: p.id,
+      victim: rival.id,
+      type: c.type,
+      stunMs: ACTIONS.FOUL_STUN_MS,
+      dir: [dirX, dirZ],
+      speed: offenderSpeed,
+    });
   }
 
   onGoal(scoringTeam) {

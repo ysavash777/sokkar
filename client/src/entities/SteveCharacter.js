@@ -188,6 +188,18 @@ export class SteveCharacter {
     this.body.rotation.x = 0;
     this.body.position.y = 0;
 
+    if (s === ANIM.KNOCKED) {
+      // Cae hacia atrás por el empujón de la falta (el yaw ya lo orienta
+      // en la dirección del golpe, ver GameClient).
+      this.body.rotation.x = 1.05;
+      this.body.position.y = -0.28;
+      poseLimb(this.legL, -0.5);
+      poseLimb(this.legR, 0.5);
+      poseLimb(this.armL, -1.1);
+      poseLimb(this.armR, -1.1);
+      return;
+    }
+
     if (s === ANIM.SLIDE) {
       // Barrida: cuerpo reclinado, pierna derecha extendida al frente.
       this.body.rotation.x = -0.95;

@@ -206,6 +206,33 @@ export function clampToPitch(ball) {
   }
 }
 
+/** Recorta la posición (x, z) de un jugador para que no salga de la cancha. */
+export function clampPlayerToPitch(p) {
+  p.pos.x = Math.max(-HALF_L + 0.3, Math.min(HALF_L - 0.3, p.pos.x));
+  p.pos.z = Math.max(-HALF_W + 0.3, Math.min(HALF_W - 0.3, p.pos.z));
+}
+
+/**
+ * Separa a dos jugadores superpuestos (círculo-círculo en el plano X/Z) —
+ * no se atraviesan. Devuelve true si estaban solapados y los empujó.
+ */
+export function resolvePlayerCollision(a, b, radius) {
+  const dx = b.pos.x - a.pos.x;
+  const dz = b.pos.z - a.pos.z;
+  const minDist = radius * 2;
+  const distSq = dx * dx + dz * dz;
+  if (distSq >= minDist * minDist || distSq < 1e-6) return false;
+  const dist = Math.sqrt(distSq);
+  const push = (minDist - dist) / 2;
+  const nx = dx / dist;
+  const nz = dz / dist;
+  a.pos.x -= nx * push;
+  a.pos.z -= nz * push;
+  b.pos.x += nx * push;
+  b.pos.z += nz * push;
+  return true;
+}
+
 /**
  * Integra el balón libre un paso dt. Devuelve 0 | 1 | -1:
  * 1 = gol en arco derecho (anota equipo 0), -1 = gol en arco izquierdo (anota equipo 1).
