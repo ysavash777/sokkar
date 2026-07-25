@@ -1,83 +1,127 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/loaders/GLTFLoader.js';
 import { ANIM, TEAM_COLORS } from '/shared/constants.js';
 
 /**
- * "Steve" de Minecraft sin texturas, solo colores.
- * Construido por extremidades independientes (cabeza, torso, 2 brazos,
- * 2 piernas) con pivotes en las articulaciones — el personaje NO es un
- * bloque único: cada extremidad tiene su propia geometría/colisión
- * (el servidor replica estas cápsulas en shared/server physics).
+ * Personaje "Steve" cargado desde un modelo .gltf hecho en Blockbench
+ * (client/assets/steve.gltf), en vez de geometría armada a mano.
+ * El rig trae 3 nodos raíz (Waist con cabeza/torso/brazos, y las dos
+ * piernas como hermanos) con pivotes ya orientados por Blockbench en
+ * cada articulación — los animamos aplicando una rotación adicional
+ * sobre la pose base (quaternion) de cada pivote.
  */
-const SKIN = 0xc9985f;
-const PANTS = 0x3b3b6e;
+const MODEL_URL = '/assets/steve.gltf';
+const MODEL_SCALE = 0.9; // el rig mide ~2 unidades de alto -> ~1.8 (PLAYER.HEIGHT)
+// La cara del modelo (ojos) quedó pintada mirando hacia -Z local, pero el
+// juego usa +Z como "adelante" (yaw=0) — se corrige con un giro de 180°.
+const FRONT_ROTATION_Y = Math.PI;
 
-// Geometrías compartidas entre todas las instancias (optimización).
-let geoCache = null;
-function getGeos() {
-  if (geoCache) return geoCache;
-  geoCache = {
-    head: new THREE.BoxGeometry(0.45, 0.45, 0.45),
-    torso: new THREE.BoxGeometry(0.45, 0.68, 0.24),
-    limb: new THREE.BoxGeometry(0.2, 0.68, 0.2),
-    eye: new THREE.BoxGeometry(0.09, 0.09, 0.02),
-    hair: new THREE.BoxGeometry(0.47, 0.12, 0.47),
-  };
-  return geoCache;
+// Un solo material tintado por equipo, compartido entre todas las instancias
+// (todas las mallas del glTF usan el mismo atlas de textura).
+let templatePromise = null;
+let teamMaterials = null;
+
+function loadTemplate() {
+  if (!templatePromise) {
+    // GLTFLoader decodifica texturas con createImageBitmap, que en algunos
+    // entornos falla para PNGs embebidos en base64 ("Couldn't load texture").
+    // Cargamos la imagen aparte con TextureLoader (basado en <img>, más
+    // compatible) y la reasignamos al material una vez lista.
+    const texPromise = fetch(MODEL_URL)
+      .then((r) => r.json())
+      .then((data) => {
+        const uri = data.images?.[0]?.uri;
+        if (!uri) return null;
+        return new THREE.TextureLoader().loadAsync(uri).then((tex) => {
+          tex.flipY = false; // convención glTF (UV con origen arriba-izquierda)
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.magFilter = THREE.NearestFilter;
+          tex.minFilter = THREE.NearestFilter;
+          tex.wrapS = THREE.ClampToEdgeWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          return tex;
+        });
+      });
+
+    templatePromise = Promise.all([new GLTFLoader().loadAsync(MODEL_URL), texPromise]).then(
+      ([gltf, texture]) => {
+        let sourceMat = null;
+        gltf.scene.traverse((o) => {
+          if (o.isMesh && !sourceMat) sourceMat = o.material;
+        });
+        if (texture) sourceMat.map = texture;
+        sourceMat.needsUpdate = true;
+
+        teamMaterials = TEAM_COLORS.map((hex) => {
+          const m = sourceMat.clone();
+          m.color = new THREE.Color(0xffffff).lerp(new THREE.Color(hex), 0.55);
+          return m;
+        });
+        return gltf.scene;
+      },
+    );
+  }
+  return templatePromise;
+}
+
+const _xAxis = new THREE.Vector3(1, 0, 0);
+const _qDelta = new THREE.Quaternion();
+
+/** Aplica una rotación adicional sobre el eje X local, sobre la pose base del pivote. */
+function poseLimb(node, angleX) {
+  if (!node) return;
+  node.quaternion.copy(node.userData.baseQuat).multiply(_qDelta.setFromAxisAngle(_xAxis, angleX));
+  node.position.copy(node.userData.basePos);
 }
 
 export class SteveCharacter {
   constructor(team, nickname) {
     this.group = new THREE.Group();
     this.team = team;
+    this.nickname = nickname;
     this.walkPhase = 0;
     this.animState = ANIM.IDLE;
     this.actionTimer = 0; // temporizador de kick/extend/slide
+    this.ready = false;
 
-    const g = getGeos();
-    const matSkin = new THREE.MeshLambertMaterial({ color: SKIN });
-    const matShirt = new THREE.MeshLambertMaterial({ color: TEAM_COLORS[team] });
-    const matPants = new THREE.MeshLambertMaterial({ color: PANTS });
-
-    // Torso (centro en y=1.19, va de 0.85 a 1.53).
-    this.torso = new THREE.Mesh(g.torso, matShirt);
-    this.torso.position.y = 1.19;
-
-    // Cabeza con "cara" (ojos + pelo) para distinguir el frente (+Z local).
-    this.head = new THREE.Mesh(g.head, matSkin);
-    this.head.position.y = 1.76;
-    const matEye = new THREE.MeshBasicMaterial({ color: 0x2b1d4f });
-    const matHair = new THREE.MeshLambertMaterial({ color: 0x4a2f1b });
-    const eyeL = new THREE.Mesh(g.eye, matEye);
-    eyeL.position.set(-0.1, 0.03, 0.23);
-    const eyeR = new THREE.Mesh(g.eye, matEye);
-    eyeR.position.set(0.1, 0.03, 0.23);
-    const hair = new THREE.Mesh(g.hair, matHair);
-    hair.position.y = 0.24;
-    this.head.add(eyeL, eyeR, hair);
-
-    // Extremidades con pivote en la articulación (hombro/cadera):
-    // el mesh cuelga hacia abajo dentro de un Group pivote.
-    this.armL = this.makeLimb(g.limb, matShirt, -0.33, 1.5);
-    this.armR = this.makeLimb(g.limb, matShirt, 0.33, 1.5);
-    this.legL = this.makeLimb(g.limb, matPants, -0.12, 0.85);
-    this.legR = this.makeLimb(g.limb, matPants, 0.12, 0.85);
-
-    // Contenedor del cuerpo para poder inclinarlo entero (barrida).
-    this.body = new THREE.Group();
-    this.body.add(this.torso, this.head, this.armL, this.armR, this.legL, this.legR);
-    this.group.add(this.body);
-
-    this.nameSprite = this.makeNameSprite(nickname, team);
-    this.group.add(this.nameSprite);
+    loadTemplate().then((template) => this._build(template));
   }
 
-  makeLimb(geo, mat, x, pivotY) {
-    const pivot = new THREE.Group();
-    pivot.position.set(x, pivotY, 0);
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.y = -0.34; // cuelga del pivote
-    pivot.add(mesh);
-    return pivot;
+  _build(template) {
+    const clone = template.clone(true);
+    const mat = teamMaterials[this.team];
+    clone.traverse((o) => {
+      if (o.isMesh) {
+        o.material = mat;
+        o.frustumCulled = false;
+      }
+    });
+
+    // Envuelve TODO (Waist + las dos piernas, que son hermanas en el rig)
+    // para poder inclinar el cuerpo entero (barrida) o escalarlo de una vez.
+    this.body = new THREE.Group();
+    for (const child of [...clone.children]) this.body.add(child);
+    this.body.scale.setScalar(MODEL_SCALE);
+    this.body.rotation.y = FRONT_ROTATION_Y;
+    this.group.add(this.body);
+
+    // GLTFLoader sanitiza los nombres: espacios -> "_" y sufijo "_1" en
+    // los hijos que colisionan con el nombre del contenedor pivote.
+    this.armL = this.body.getObjectByName('Left_Arm');
+    this.armR = this.body.getObjectByName('Right_Arm');
+    this.legL = this.body.getObjectByName('Left_Leg');
+    this.legR = this.body.getObjectByName('Right_Leg');
+
+    for (const n of [this.armL, this.armR, this.legL, this.legR]) {
+      if (!n) continue;
+      n.userData.baseQuat = n.quaternion.clone();
+      n.userData.basePos = n.position.clone();
+    }
+
+    this.nameSprite = this.makeNameSprite(this.nickname, this.team);
+    this.group.add(this.nameSprite);
+
+    this.ready = true;
   }
 
   makeNameSprite(text, team) {
@@ -95,7 +139,7 @@ export class SteveCharacter {
     const tex = new THREE.CanvasTexture(canvas);
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
     sprite.scale.set(2, 0.5, 1);
-    sprite.position.y = 2.35;
+    sprite.position.y = 2.3;
     return sprite;
   }
 
@@ -109,60 +153,59 @@ export class SteveCharacter {
 
   /** Animación procedural: ciclo de caminata + poses de acción. */
   update(dt, horizontalSpeed) {
+    if (!this.ready) return;
     this.actionTimer += dt;
     const s = this.animState;
 
     // Reset de pose base.
     this.body.rotation.x = 0;
     this.body.position.y = 0;
-    this.legR.position.z = 0;
 
     if (s === ANIM.SLIDE) {
       // Barrida: cuerpo reclinado, pierna derecha extendida al frente.
-      // Offset moderado para que el cuerpo NO atraviese el piso.
       this.body.rotation.x = -0.95;
       this.body.position.y = -0.32;
-      this.legR.rotation.x = -1.3;
-      this.legL.rotation.x = 0.35;
-      this.armL.rotation.x = 0.8;
-      this.armR.rotation.x = 0.8;
+      poseLimb(this.legR, -1.3);
+      poseLimb(this.legL, 0.35);
+      poseLimb(this.armL, 0.8);
+      poseLimb(this.armR, 0.8);
       return;
     }
 
     if (s === ANIM.KICK) {
       // Patada rápida con la derecha (~0.3 s de swing).
       const t = Math.min(this.actionTimer / 0.3, 1);
-      this.legR.rotation.x = -Math.sin(t * Math.PI) * 1.5;
-      this.legL.rotation.x = 0.2;
-      this.armL.rotation.x = -0.5;
-      this.armR.rotation.x = 0.5;
+      poseLimb(this.legR, -Math.sin(t * Math.PI) * 1.5);
+      poseLimb(this.legL, 0.2);
+      poseLimb(this.armL, -0.5);
+      poseLimb(this.armR, 0.5);
       return;
     }
 
     if (s === ANIM.EXTEND) {
       // Cruzar pie: extensión defensiva corta del pie derecho.
-      this.legR.rotation.x = -0.9;
-      this.legR.position.z = 0.12;
-      this.legL.rotation.x = 0.15;
-      this.armL.rotation.x = 0.3;
-      this.armR.rotation.x = -0.3;
+      poseLimb(this.legR, -0.9);
+      if (this.legR) this.legR.position.z += 0.12;
+      poseLimb(this.legL, 0.15);
+      poseLimb(this.armL, 0.3);
+      poseLimb(this.armR, -0.3);
       return;
     }
 
     if (s === ANIM.STUNNED) {
       this.body.rotation.x = 0.25;
-      this.armL.rotation.x = 0.6;
-      this.armR.rotation.x = 0.6;
-      this.legL.rotation.x = 0;
-      this.legR.rotation.x = 0;
+      poseLimb(this.armL, 0.6);
+      poseLimb(this.armR, 0.6);
+      poseLimb(this.legL, 0);
+      poseLimb(this.legR, 0);
       return;
     }
 
     if (s === ANIM.JUMP) {
-      this.legL.rotation.x = 0.5;
-      this.legR.rotation.x = -0.5;
-      this.armL.rotation.x = -2.6;
-      this.armR.rotation.x = -2.6;
+      poseLimb(this.legL, 0.5);
+      poseLimb(this.legR, -0.5);
+      poseLimb(this.armL, -2.6);
+      poseLimb(this.armR, -2.6);
       return;
     }
 
@@ -170,15 +213,17 @@ export class SteveCharacter {
     const speedNorm = Math.min(horizontalSpeed / 7, 1.15);
     this.walkPhase += dt * (4 + horizontalSpeed * 1.7);
     const swing = Math.sin(this.walkPhase) * 0.85 * speedNorm;
-    this.legL.rotation.x = swing;
-    this.legR.rotation.x = -swing;
-    this.armL.rotation.x = -swing * 0.8;
-    this.armR.rotation.x = swing * 0.8;
+    poseLimb(this.legL, swing);
+    poseLimb(this.legR, -swing);
+    poseLimb(this.armL, -swing * 0.8);
+    poseLimb(this.armR, swing * 0.8);
   }
 
   dispose() {
-    this.nameSprite.material.map.dispose();
-    this.nameSprite.material.dispose();
+    if (this.nameSprite) {
+      this.nameSprite.material.map.dispose();
+      this.nameSprite.material.dispose();
+    }
     this.group.removeFromParent();
   }
 }

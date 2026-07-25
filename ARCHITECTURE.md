@@ -15,6 +15,8 @@ sokkaio/
 ├── shared/
 │   └── constants.js         # Única fuente de verdad de gameplay/física (ESM,
 │                            #   importado por el server y servido al browser)
+├── client/assets/
+│   └── steve.gltf           # Modelo del personaje (Blockbench), buffers/textura embebidos
 ├── server/
 │   ├── index.js             # Express (estáticos + healthcheck) + Socket.IO
 │   └── game/
@@ -29,7 +31,7 @@ sokkaio/
         │   ├── InputManager.js     # Teclado/mouse + pointer lock
         │   └── CameraController.js # Cámara orbital 360°
         ├── entities/
-        │   ├── SteveCharacter.js   # Personaje por extremidades + animación procedural
+        │   ├── SteveCharacter.js   # Personaje (glTF de Blockbench) + animación procedural
         │   ├── Ball.js             # Balón (render + rodadura visual)
         │   └── Pitch.js            # Cancha, líneas, arcos (solo colores)
         ├── game/
@@ -70,13 +72,32 @@ Servidor ──(eventos: goal / foul / steal / …)────▶ Todos
 
 ## Decisiones de gameplay
 
-### Personaje "Steve" por extremidades
+### Personaje "Steve" (modelo glTF de Blockbench)
 
-`SteveCharacter` construye cabeza, torso, 2 brazos y 2 piernas como mallas
-independientes con pivotes en las articulaciones. **No hay un bloque
-envolvente único**: el servidor replica la silueta con una cápsula por
-extremidad (`server/game/physics.js → LIMB_CAPSULES`), de modo que el balón
-solo rebota donde visualmente hay cuerpo — nunca en "aire".
+`SteveCharacter` carga `client/assets/steve.gltf` (exportado de Blockbench)
+con `GLTFLoader`, en vez de armar la geometría a mano. El rig trae cabeza,
+torso, 2 brazos y 2 piernas como nodos independientes con pivote propio en
+cada articulación — **no es un bloque envolvente único**: el servidor
+replica esa misma silueta con una cápsula por extremidad
+(`server/game/physics.js → LIMB_CAPSULES`), de modo que el balón solo
+rebota donde visualmente hay cuerpo, nunca en "aire".
+
+La carga es asíncrona: el modelo se descarga y clona una sola vez (template
+compartido a nivel de módulo), y cada `SteveCharacter` clona esa jerarquía
+liviana reutilizando geometrías. El material (textura del skin) también se
+clona una única vez **por equipo**, tintado hacia el color del equipo
+(`TEAM_COLORS`), no por jugador — evita crear materiales de más.
+
+La animación procedural (caminata, patada, cruzar pie, barrida, aturdido)
+ya no fija `rotation.x` directo: cada pivote guarda su pose base (quaternion
++ posición) tal como la esculpió Blockbench, y cada frame se le compone una
+rotación adicional sobre el eje X local (`poseLimb()`), preservando la pose
+natural del rig en vez de pisarla.
+
+> Nota técnica: `GLTFLoader` decodifica texturas con `createImageBitmap`,
+> que en algunos entornos falla para PNGs embebidos en base64. Por eso la
+> textura se carga aparte con `THREE.TextureLoader` (basado en `<img>`, más
+> compatible) y se reasigna al material una vez lista.
 
 ### Cámara 360 desacoplada + strafe
 
@@ -156,9 +177,12 @@ ventana activa de la acción:
 
 ## Optimización (anti-lag)
 
-- **Sin texturas**: solo `MeshLambertMaterial`/`MeshBasicMaterial` de color plano.
+- **Cancha, balón y HUD sin texturas**: solo `MeshLambertMaterial`/`MeshBasicMaterial`
+  de color plano. El personaje es la única excepción: usa la textura del
+  modelo `.gltf` (64×64), tintada por equipo.
 - **Sin sombras dinámicas**: hemisferio + direccional sin shadow map.
-- **Geometrías compartidas** entre los 8 personajes (cache de `BoxGeometry`).
+- **Geometrías y materiales compartidos** entre los 8 personajes: el modelo
+  se carga y clona una sola vez, con 2 materiales (uno por equipo) en total.
 - **Pixel ratio cap 1.5** para pantallas de alta densidad.
 - **Snapshots compactos**: arrays numéricos redondeados, no objetos verbosos.
 - **Sin build step**: Three.js por import map (CDN con cache) y ES modules

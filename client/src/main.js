@@ -73,7 +73,7 @@ window.addEventListener('resize', () => {
 });
 
 // Handle de depuración (consola del navegador).
-window.sokkaio = { game, net, input };
+window.sokkaio = { game, net, input, renderer, scene, camera };
 
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
