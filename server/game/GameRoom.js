@@ -212,23 +212,24 @@ export class GameRoom {
       const t = (charge - ACTIONS.KICK_PIVOT_CHARGE) / (1 - ACTIONS.KICK_PIVOT_CHARGE);
       speed = ACTIONS.KICK_PIVOT_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_PIVOT_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
     }
-    // Elevación: aparece apenas se sale del toque mínimo, y además depende
-    // de hacia dónde mira verticalmente la cámara al patear — mirando al
-    // piso el remate sale rasante, mirando al cielo sale más alto.
-    const liftT = Math.max(0, (charge - 0.1) / 0.9);
+    // Elevación DESACOPLADA de la potencia: la maneja sobre todo hacia
+    // dónde mira verticalmente la cámara (pitch), no cuánto se cargó la
+    // barra — así un toque mínimo apuntando bien arriba igual levanta el
+    // balón lo suficiente para un centro/globo corto y controlable, en vez
+    // de necesitar rematar fuerte para poder levantarla (lo que solo
+    // permitía pelotazos lejanos con altura, nunca centros cortos).
     const pitch = Number.isFinite(data?.pitch)
       ? Math.max(CAMERA.PITCH_MIN, Math.min(CAMERA.PITCH_MAX, data.pitch))
       : 0.35;
     const pitchNorm = 1 - (pitch - CAMERA.PITCH_MIN) / (CAMERA.PITCH_MAX - CAMERA.PITCH_MIN); // 0 piso, 1 cielo
-    const liftMult =
-      ACTIONS.KICK_LIFT_PITCH_MIN_MULT +
-      (ACTIONS.KICK_LIFT_PITCH_MAX_MULT - ACTIONS.KICK_LIFT_PITCH_MIN_MULT) * pitchNorm;
+    const liftY =
+      ACTIONS.KICK_LIFT_BASE + pitchNorm * ACTIONS.KICK_LIFT_PITCH_MAX + charge * ACTIONS.KICK_LIFT_CHARGE_BONUS;
     p.lastKickAt = now;
     ball.ownerId = null;
     ball.caught = false;
     ball.vel.x = Math.sin(dirYaw) * speed;
     ball.vel.z = Math.cos(dirYaw) * speed;
-    ball.vel.y = ACTIONS.KICK_LIFT * Math.pow(liftT, 1.5) * liftMult;
+    ball.vel.y = liftY;
     this.io.emit('kicked', { id });
   }
 
@@ -242,27 +243,18 @@ export class GameRoom {
     // Ninguna de las tres tiene sentido con el balón ya en tus propios pies.
     if (this.ball.ownerId === id) return;
 
-    if (type === 'slide' || type === 'lowdive') {
-      if ((type === 'lowdive' && p.position !== 'GK') || now < p.challengeCooldownUntil || p.challenge) return;
-      const duration = type === 'lowdive' ? ACTIONS.LOW_DIVE_DURATION_MS : ACTIONS.SLIDE_DURATION_MS;
-      const cooldown = type === 'lowdive' ? ACTIONS.LOW_DIVE_COOLDOWN_MS : ACTIONS.SLIDE_COOLDOWN_MS;
-      p.challenge = { type, until: now + duration, resolved: false, side: Number(data?.side) >= 0 ? 1 : -1 };
-      p.challengeCooldownUntil = now + cooldown;
+    // SIN cooldown salvo la barrida recta (única acción que lo tiene, a
+    // pedido explícito): el vuelo bajo solo no puede solaparse con otra
+    // acción en curso, sin castigo extra después de terminar.
+    if (type === 'slide') {
+      if (now < p.challengeCooldownUntil || p.challenge) return;
+      p.challenge = { type, until: now + ACTIONS.SLIDE_DURATION_MS, resolved: false };
+      p.challengeCooldownUntil = now + ACTIONS.SLIDE_COOLDOWN_MS;
       return;
     }
-
-    // Arquero: si viene volando (clavado en el aire) dentro de SU área de
-    // meta y el balón está a distancia de control, atajarlo con las manos
-    // en vez de controlarlo con los pies. Fuera del área (o sin estar
-    // volando), es un cruzar-pie normal, como cualquier jugador.
-    if (p.position === 'GK' && p.anim === ANIM.DIVE && this.canCatch(p)) {
-      const prevOwner = this.players.get(this.ball.ownerId);
-      if (prevOwner) prevOwner.captureLockUntil = now + 1000;
-      this.ball.ownerId = p.id;
-      this.ball.caught = true;
-      this.ball.capturedAt = now;
-      this.io.emit('possession', { id: p.id });
-      this.io.emit('caught', { id: p.id });
+    if (type === 'lowdive') {
+      if (p.position !== 'GK' || p.challenge) return;
+      p.challenge = { type, until: now + ACTIONS.LOW_DIVE_DURATION_MS, resolved: false, side: Number(data?.side) >= 0 ? 1 : -1 };
       return;
     }
 
@@ -278,17 +270,21 @@ export class GameRoom {
     return p.team === 0 ? p.pos.x < -HALF_L + FIELD.PENALTY_DEPTH : p.pos.x > HALF_L - FIELD.PENALTY_DEPTH;
   }
 
-  /** ¿Puede el arquero `p` atajar el balón LIBRE con las manos ahora mismo? */
-  canCatch(p) {
-    if (this.ball.ownerId) return false; // solo se ataja un balón libre (en vuelo)
-    if (!this.isInOwnPenaltyArea(p)) return false;
-    const dx = this.ball.pos.x - p.pos.x;
-    const dz = this.ball.pos.z - p.pos.z;
-    const dy = this.ball.pos.y - p.pos.y;
-    return (
-      dx * dx + dz * dz < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS &&
-      Math.abs(dy) < ACTIONS.CONTROL_AREA_HEIGHT
-    );
+  /**
+   * El arquero `p` ataja el balón (libre) con las manos: pasa a ser el
+   * dueño con `caught = true` (ver `dribble()`, lo sostiene cerca del
+   * pecho en vez de a los pies). Se llama automáticamente cuando el balón
+   * TOCA su cuerpo mientras vuela (clavado alto o vuelo bajo) dentro de
+   * SU área de meta — no hace falta ningún botón (ver `tick()`).
+   */
+  catchBall(p, now) {
+    const prevOwner = this.players.get(this.ball.ownerId);
+    if (prevOwner) prevOwner.captureLockUntil = now + 1000;
+    this.ball.ownerId = p.id;
+    this.ball.caught = true;
+    this.ball.capturedAt = now;
+    this.io.emit('possession', { id: p.id });
+    this.io.emit('caught', { id: p.id });
   }
 
   /**
@@ -365,17 +361,27 @@ export class GameRoom {
       // cruzar pie / barrida (ver resolve*Challenge) para recibirlo a
       // propósito. EXCEPCIONES, siempre automáticas (sin clic):
       //  - un cuerpo BARRIÉNDOSE es sólido (rebota de frente/costado/arriba).
-      //  - un cuerpo en VUELO BAJO (arquero) es sólido hacia el costado.
-      //  - un cuerpo EN EL AIRE (salto, clavado de arquero) también lo es.
+      //  - un cuerpo en VUELO BAJO o CLAVADO (arquero) es sólido hacia el
+      //    costado/aire — y si lo TOCA dentro de SU área de meta, en vez de
+      //    rebotarlo lo ataja con las manos (catchBall), sin apretar nada.
       //  - el ARQUERO de pie también es sólido (colisión automática de
-      //    cuerpo, sin necesidad de cruzar pie) — solo bloquea/rebota, no
-      //    controla; atajar con las manos requiere presionar cruzar pie
-      //    dentro del área de meta (ver onChallenge -> canCatch).
+      //    cuerpo, sin necesidad de cruzar pie) — pero eso solo bloquea o
+      //    rebota, nunca ataja (atajar requiere estar en pleno vuelo).
       for (const p of this.players.values()) {
-        if (p.challenge?.type === 'slide') collideBallWithSlidingBody(ball, p);
-        else if (p.challenge?.type === 'lowdive') collideBallWithLowDiveBody(ball, p, p.challenge.side || 1);
-        else if (p.pos.y > PLAYER.AIRBORNE_COLLISION_MIN_Y) collideBallWithAirborneBody(ball, p);
-        else if (p.position === 'GK') collideBallWithPlayer(ball, p);
+        if (ball.ownerId) break; // ya lo atajaron este mismo tick
+        if (p.challenge?.type === 'slide') {
+          collideBallWithSlidingBody(ball, p);
+        } else if (p.challenge?.type === 'lowdive') {
+          const hit = collideBallWithLowDiveBody(ball, p, p.challenge.side || 1);
+          if (hit && this.isInOwnPenaltyArea(p)) this.catchBall(p, now);
+        } else if (p.pos.y > PLAYER.AIRBORNE_COLLISION_MIN_Y) {
+          const hit = collideBallWithAirborneBody(ball, p);
+          if (hit && p.position === 'GK' && p.anim === ANIM.DIVE && this.isInOwnPenaltyArea(p)) {
+            this.catchBall(p, now);
+          }
+        } else if (p.position === 'GK') {
+          collideBallWithPlayer(ball, p);
+        }
       }
     }
   }

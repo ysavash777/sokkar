@@ -24,10 +24,11 @@ arquero puede hacer el clavado lateral (ver Controles).
 | `Mouse` | Cámara 360° (no rota al personaje si está quieto) |
 | `Shift` | Sprint (stamina, recarga completa en ~5 s) |
 | `Espacio` | Salto |
-| `Clic izquierdo (mantener)` | Cargar remate: barra de poder + línea de dirección según la cámara; se dispara al soltar (sin cooldown) |
+| `Clic izquierdo (mantener)` | Cargar remate: barra de poder + recorrido previsto según potencia y hacia dónde mirás con la cámara; se dispara al soltar (sin cooldown) |
 | `Clic ruedita` | Cruzar pie (sin cooldown) — controla/roba el balón dentro del círculo bajo tus pies, en cualquier ángulo |
-| `Clic derecho` | Barrida |
-| `Clic ruedita en el aire` (solo arquero) | Clavado lateral a media altura, hacia donde te estés moviendo con A/D |
+| `Clic derecho` | Barrida (única acción con cooldown) |
+| `Clic izquierdo en el aire` (solo arquero) | Clavado lateral a media altura, hacia donde te estés moviendo con A/D |
+| `Clic derecho + A/D (sin W)` (solo arquero) | Vuelo bajo: mismo clavado pero pegado al piso, sin cooldown |
 
 > Cruzar pie: metida de pie sutil y breve. Si la pelota está dentro del
 > **cilindro de control** que ves marcado en la base de tu personaje (de
@@ -64,6 +65,13 @@ arquero puede hacer el clavado lateral (ver Controles).
 > de frente, y arrancar a moverse o frenar tiene una breve inercia
 > (aceleración/desaceleración, no es instantáneo).
 >
+> Altura del remate: depende de hacia dónde mirás con la cámara, no de
+> cuánta barra cargaste — mirá al cielo y hasta un toque suave levanta el
+> balón por encima de la cabeza (centros cortos y controlables); mirá al
+> piso y sale rasante, aunque cargues a fondo. Mientras cargás, la línea
+> de puntería muestra el arco real que va a hacer el balón, ajustándose
+> en vivo a la potencia y hacia dónde apuntás.
+>
 > Los jugadores no se atraviesan entre sí — colisión de cuerpo precisa.
 >
 > Si el balón toca tu **brazo** (entre hombro y mano) en cualquier
@@ -73,6 +81,13 @@ arquero puede hacer el clavado lateral (ver Controles).
 > tiempo de recarga no cambió, sigue en ~5 s); **no recarga mientras
 > sigas apretando Shift**, aunque ya no puedas sprintar. Soltalo para que
 > vuelva a cargar (más rápido si estás parado del todo).
+>
+> Arquero (`GK`): dentro de su propia área de meta, si el balón toca su
+> cuerpo mientras está en pleno clavado o vuelo bajo, lo ataja con las
+> manos automáticamente (sin apretar nada) y queda parado con el balón en
+> las manos hasta que patea. Fuera del área, controla con los pies como
+> cualquier jugador. Ninguna de estas acciones tiene cooldown — la única
+> acción del juego con cooldown es la barrida recta.
 
 ## Móvil
 

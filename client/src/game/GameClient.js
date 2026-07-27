@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FIELD, PLAYER, ANIM, NET, BALL, DRIBBLE, ACTIONS } from '/shared/constants.js';
+import { FIELD, CAMERA, PLAYER, ANIM, NET, BALL, DRIBBLE, ACTIONS } from '/shared/constants.js';
 import { SteveCharacter } from '../entities/SteveCharacter.js';
 import { Ball } from '../entities/Ball.js';
 import { createPitch } from '../entities/Pitch.js';
@@ -7,6 +7,8 @@ import { CameraController } from '../core/CameraController.js';
 
 const HALF_L = FIELD.LENGTH / 2;
 const HALF_W = FIELD.WIDTH / 2;
+const AIM_TRAJECTORY_POINTS = 26;
+const AIM_TRAJECTORY_STEP = 0.045; // s por muestra del recorrido previsto
 
 /**
  * Orquestador del cliente:
@@ -50,6 +52,7 @@ export class GameClient {
       diving: false, // arquero: clavado lateral en el aire
       diveDirX: 0,
       diveDirZ: 0,
+      diveGroundUntil: 0, // arquero: tendido de costado tras aterrizar, antes de levantarse
       lowDiveUntil: 0, // arquero: vuelo bajo (lateral, pegado al piso)
       lowDiveDirX: 0,
       lowDiveDirZ: 0,
@@ -63,15 +66,16 @@ export class GameClient {
     this.ball = new Ball();
     this.scene.add(this.ball.mesh);
 
-    // Línea de puntería del remate cargado (plana sobre el césped).
-    const aimGeo = new THREE.PlaneGeometry(0.16, 1);
-    aimGeo.rotateX(-Math.PI / 2);
-    aimGeo.translate(0, 0, 0.5); // origen en el jugador, crece hacia +Z
-    this.aimLine = new THREE.Mesh(
-      aimGeo,
-      new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.85 }),
-    );
+    // Recorrido previsto del remate cargado: una curva que muestra el
+    // arco real que hará el balón (misma física que el servidor), no solo
+    // la dirección — se recalcula en vivo mientras se carga (ver
+    // updateAimTrajectory), reaccionando tanto a la potencia como a hacia
+    // dónde apunta la cámara verticalmente.
+    const aimGeo = new THREE.BufferGeometry();
+    aimGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(AIM_TRAJECTORY_POINTS * 3), 3));
+    this.aimLine = new THREE.Line(aimGeo, new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.9 }));
     this.aimLine.visible = false;
+    this.aimLine.frustumCulled = false;
     this.scene.add(this.aimLine);
 
     // Círculo en la base del jugador local: indica el área donde cruzar pie
@@ -204,6 +208,7 @@ export class GameClient {
     const stunned = now < L.stunnedUntil;
     const sliding = now < L.slideUntil;
     const lowDiving = now < L.lowDiveUntil; // arquero: vuelo bajo lateral
+    const diveGrounded = now < L.diveGroundUntil; // arquero: tendido tras aterrizar del clavado
     const grounded = now < L.groundUntil; // infractor de barrida, tendido
     const knocked = now < L.knockedUntil; // víctima de falta, cayendo
 
@@ -220,16 +225,15 @@ export class GameClient {
     const controllingBall = this.ballOwnerId === this.myId;
 
     // ---- acciones
-    if (!stunned && !sliding && !knocked && !lowDiving) {
-      // Arquero: clavado lateral a media altura mientras está en el aire
-      // y se mueve claramente al costado (reusa el botón de cruzar pie).
-      // Si ya está volando y el balón libre está cerca, ese mismo botón
-      // ataja con las manos en vez de iniciar otro clavado (lo resuelve
-      // el servidor según posición/área — ver GameRoom.onChallenge).
+    if (!stunned && !sliding && !knocked && !lowDiving && !L.diving && !diveGrounded) {
+      // Arquero: clavado a media altura con clic izquierdo (no cargar el
+      // remate) mientras está en el aire y se mueve claramente al costado.
+      // Si el balón toca su cuerpo durante el vuelo, el servidor lo ataja
+      // solo (ver GameRoom.tick / catchBall) — no hace falta otro botón.
       let diveTriggered = false;
-      if (this.myPosition === 'GK' && !L.onGround && !L.diving) {
+      if (this.myPosition === 'GK' && !L.onGround) {
         const axis = this.input.moveAxis;
-        if (Math.abs(axis.x) > 0.3 && this.input.consume('extend')) {
+        if (Math.abs(axis.x) > 0.3 && this.input.consume('kickPress')) {
           const camYaw = this.cameraCtrl.yaw;
           const side = Math.sign(axis.x);
           L.diving = true;
@@ -241,8 +245,9 @@ export class GameClient {
       }
 
       // Remate cargado (sin cooldown): mantener clic izq llena la barra
-      // y muestra la línea de dirección según la cámara.
-      if (this.input.kickHeld) {
+      // y muestra el recorrido previsto según la cámara.
+      if (!diveTriggered) this.input.consume('kickPress');
+      if (!diveTriggered && this.input.kickHeld) {
         this.kickCharge = Math.min(1, this.kickCharge + (dt * 1000) / ACTIONS.KICK_CHARGE_TIME_MS);
       }
       if (this.input.consume('kickRelease')) {
@@ -259,17 +264,16 @@ export class GameClient {
         this.kickCharge = 0;
       }
       // Cruzar pie: SIN cooldown ni animación — spameable o cronometrado
-      // al llegar la pelota. El servidor decide si controla con el pie o
-      // (arquero volando dentro de su área, con el balón cerca) ataja con
-      // las manos.
-      if (!diveTriggered && !controllingBall && this.input.consume('extend')) {
+      // al llegar la pelota.
+      if (!controllingBall && this.input.consume('extend')) {
         this.net.sendChallenge('extend');
       }
-      if (!controllingBall && this.input.consume('slide') && now > L.slideCdUntil && L.onGround) {
+      if (!controllingBall && this.input.consume('slide') && L.onGround) {
         const axis = this.input.moveAxis;
         // Arquero moviéndose al costado (A/D, sin W) + barrida = vuelo
         // bajo en vez de barrida normal — la barrida sigue siendo en
-        // línea recta o presionando W.
+        // línea recta o presionando W. El vuelo bajo NO tiene cooldown
+        // (solo la barrida recta lo tiene).
         if (this.myPosition === 'GK' && Math.abs(axis.x) > 0.3 && Math.abs(axis.z) < 0.4) {
           const camYaw = this.cameraCtrl.yaw;
           const side = Math.sign(axis.x);
@@ -277,8 +281,7 @@ export class GameClient {
           L.lowDiveUntil = now + ACTIONS.LOW_DIVE_DURATION_MS;
           L.lowDiveDirX = -side * Math.cos(camYaw);
           L.lowDiveDirZ = side * Math.sin(camYaw);
-          L.slideCdUntil = now + ACTIONS.LOW_DIVE_COOLDOWN_MS;
-        } else {
+        } else if (now > L.slideCdUntil) {
           this.net.sendChallenge('slide');
           L.slideUntil = now + ACTIONS.SLIDE_DURATION_MS;
           L.slideCdUntil = now + ACTIONS.SLIDE_COOLDOWN_MS;
@@ -291,6 +294,7 @@ export class GameClient {
       }
     } else {
       // Descartar acciones encoladas mientras está bloqueado.
+      this.input.consume('kickPress');
       this.input.consume('kickRelease');
       this.input.consume('extend');
       this.input.consume('slide');
@@ -298,15 +302,11 @@ export class GameClient {
       this.kickCharge = 0;
     }
 
-    // Línea de puntería + barra de poder mientras se carga el remate.
-    const charging = this.input.kickHeld && !stunned && !sliding && !knocked && !L.diving && !lowDiving && !L.holding;
+    // Recorrido previsto + barra de poder mientras se carga el remate.
+    const charging =
+      this.input.kickHeld && !stunned && !sliding && !knocked && !L.diving && !lowDiving && !diveGrounded && !L.holding;
     this.aimLine.visible = charging;
-    if (charging) {
-      const len = 3.5 + this.kickCharge * 8.5;
-      this.aimLine.scale.z = len;
-      this.aimLine.position.set(L.pos.x, 0.03, L.pos.z);
-      this.aimLine.rotation.y = this.cameraCtrl.yaw;
-    }
+    if (charging) this.updateAimTrajectory();
     this.hud.setPower(charging ? this.kickCharge : null);
 
     // ---- movimiento
@@ -329,6 +329,10 @@ export class GameClient {
       L.curSpeed = PLAYER.DIVE_SIDE_SPEED;
       moveX = L.diveDirX;
       moveZ = L.diveDirZ;
+    } else if (diveGrounded) {
+      // Recién aterrizado del clavado: tendido de costado, sin control,
+      // frena con la misma inercia que un aturdido normal.
+      L.curSpeed = Math.max(0, L.curSpeed - PLAYER.DECEL * dt);
     } else if (lowDiving) {
       // Vuelo bajo del arquero: igual que el clavado pero sin salto,
       // deriva lateral constante pegado al piso.
@@ -436,6 +440,11 @@ export class GameClient {
         L.pos.y = 0;
         L.velY = 0;
         L.onGround = true;
+        // Aterrizó del clavado: queda tendido de costado un instante antes
+        // de levantarse — salvo que ya haya atajado el balón en el aire,
+        // en cuyo caso aterriza directo en la pose de atajada (más lógico
+        // que desplomarse habiendo agarrado la pelota).
+        if (L.diving && !L.holding) L.diveGroundUntil = now + PLAYER.DIVE_GROUND_MS;
         L.diving = false; // aterrizó: devuelve el control normal
       }
     }
@@ -447,11 +456,13 @@ export class GameClient {
     // frame pisada por IDLE/JOG.
     const inAction = now < L.actionUntil;
     // Prioridad: cayendo por el golpe > balón atajado en las manos >
-    // clavado de arquero > vuelo bajo > tendido tras cometer la falta >
-    // aturdido de pie > barrida > acción en curso > salto > movimiento.
+    // clavado de arquero > tendido tras aterrizar del clavado > vuelo bajo
+    // > tendido tras cometer la falta > aturdido de pie > barrida > acción
+    // en curso > salto > movimiento.
     if (knocked) L.anim = ANIM.KNOCKED;
     else if (L.holding) L.anim = ANIM.CATCH;
     else if (L.diving) L.anim = ANIM.DIVE;
+    else if (diveGrounded) L.anim = ANIM.DIVE_GROUND;
     else if (lowDiving) L.anim = ANIM.LOW_DIVE;
     else if (grounded) L.anim = ANIM.SLIDE; // tendido, misma pose que la barrida
     else if (stunned) L.anim = ANIM.STUNNED;
@@ -474,6 +485,55 @@ export class GameClient {
       ch.setAnim(L.anim);
       ch.update(dt, speed);
     }
+  }
+
+  /**
+   * Recalcula el recorrido previsto del remate en curso, muestreando la
+   * MISMA física que aplicará el servidor (misma curva de potencia por
+   * carga, mismo cálculo de altura por pitch — ver GameRoom.onKick) para
+   * que la curva coincida con el resultado real. Se llama cada frame
+   * mientras se carga, así reacciona en vivo tanto a la potencia como a
+   * hacia dónde apunta la cámara.
+   */
+  updateAimTrajectory() {
+    const L = this.local;
+    const dirYaw = this.cameraCtrl.yaw;
+    const pitch = this.cameraCtrl.pitch;
+    const pitchNorm = 1 - (pitch - CAMERA.PITCH_MIN) / (CAMERA.PITCH_MAX - CAMERA.PITCH_MIN);
+
+    let speed;
+    if (this.kickCharge <= ACTIONS.KICK_PIVOT_CHARGE) {
+      const t = this.kickCharge / ACTIONS.KICK_PIVOT_CHARGE;
+      speed = ACTIONS.KICK_MIN_SPEED + (ACTIONS.KICK_PIVOT_SPEED - ACTIONS.KICK_MIN_SPEED) * Math.pow(t, ACTIONS.KICK_LOW_CURVE);
+    } else {
+      const t = (this.kickCharge - ACTIONS.KICK_PIVOT_CHARGE) / (1 - ACTIONS.KICK_PIVOT_CHARGE);
+      speed = ACTIONS.KICK_PIVOT_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_PIVOT_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
+    }
+    const liftY =
+      ACTIONS.KICK_LIFT_BASE + pitchNorm * ACTIONS.KICK_LIFT_PITCH_MAX + this.kickCharge * ACTIONS.KICK_LIFT_CHARGE_BONUS;
+    const vx = Math.sin(dirYaw) * speed;
+    const vz = Math.cos(dirYaw) * speed;
+
+    let px = L.pos.x + Math.sin(dirYaw) * 0.6;
+    let pz = L.pos.z + Math.cos(dirYaw) * 0.6;
+    let py = BALL.RADIUS + 0.15;
+    let vy = liftY;
+
+    const positions = this.aimLine.geometry.attributes.position.array;
+    let count = 0;
+    for (let i = 0; i < AIM_TRAJECTORY_POINTS; i++) {
+      positions[i * 3] = px;
+      positions[i * 3 + 1] = py;
+      positions[i * 3 + 2] = pz;
+      count++;
+      if (py <= BALL.RADIUS && i > 0) break;
+      px += vx * AIM_TRAJECTORY_STEP;
+      pz += vz * AIM_TRAJECTORY_STEP;
+      vy -= BALL.GRAVITY * AIM_TRAJECTORY_STEP;
+      py = Math.max(BALL.RADIUS, py + vy * AIM_TRAJECTORY_STEP);
+    }
+    this.aimLine.geometry.setDrawRange(0, count);
+    this.aimLine.geometry.attributes.position.needsUpdate = true;
   }
 
   updateRemotePlayers(dt) {

@@ -351,13 +351,29 @@ de quien lo eligió.
 
 Solo un jugador en posición `GK` puede hacer el **clavado lateral**:
 mientras está en el aire (ya saltó) y se mueve claramente al costado
-(input de strafe > 0.3), presionar cruzar pie (clic ruedita) dispara un
-salto lateral a **media altura** (`DIVE_HEIGHT_MULT = 0.5`, la velocidad
-vertical se relanza a `JUMP_SPEED·√0.5` para que el pico sea la mitad) con
-deriva constante hacia el costado (`DIVE_SIDE_SPEED`) hasta aterrizar —
-sin control de WASD durante el clavado. No hace falta nada especial para
-que colisione con el balón: al estar en el aire, ya cae bajo la colisión
-aérea automática de arriba (misma lógica de zonas, misma cápsula).
+(input de strafe > 0.3), presionar **clic izquierdo** (no cargarlo como
+remate) dispara un salto lateral a **media altura** (`DIVE_HEIGHT_MULT =
+0.5`, la velocidad vertical se relanza a `JUMP_SPEED·√0.5` para que el
+pico sea la mitad) con deriva constante hacia el costado
+(`DIVE_SIDE_SPEED`) hasta aterrizar — sin control de WASD durante el
+clavado. El disparo usa el flanco de bajada del clic (`InputManager`
+expone `queued.kickPress`, distinto de `kickHeld`) para no confundirse
+con la carga normal del remate — mientras dura el clavado, `kickHeld`
+queda completamente ignorado (no se acumula carga ni se dispara un
+remate fantasma al soltar el mouse en el aire). No hace falta nada
+especial para que colisione con el balón: al estar en el aire, ya cae
+bajo la colisión aérea automática de arriba (misma lógica de zonas,
+misma cápsula) — y si esa colisión ocurre dentro de SU área de meta, en
+vez de rebotar la ataja con las manos (ver "Área de meta" más abajo).
+
+Al aterrizar, el arquero no vuelve directo a la pose de pie: queda
+**tendido de costado** (`ANIM.DIVE_GROUND`, `PLAYER.DIVE_GROUND_MS` ≈
+650 ms, sin control de WASD) hacia el lado real por el que voló, y recién
+después se levanta solo (vuelve a control normal) — salvo que haya
+atajado el balón en el aire, en cuyo caso aterriza directo en la pose de
+atajada (`ANIM.CATCH`) en vez de desplomarse. Antes el aterrizaje volvía
+a la pose normal en el mismo frame, lo que se veía como un salto brusco
+del vuelo a estar parado.
 
 #### Dirección real de la animación (no un signo fijo)
 
@@ -382,42 +398,62 @@ pie también es sólido** contra el balón libre en todo momento
 (`collideBallWithPlayer` en el tick, cuando no está en el aire ni
 barriéndose/volando bajo) — bloquea/rebota automáticamente, como un
 arquero real parado en el camino de un remate. Esto NO controla el
-balón — solo lo desvía; atajarlo de verdad (ver abajo) requiere el input
-explícito.
+balón — solo lo desvía; atajarlo de verdad (ver abajo) requiere estar en
+pleno clavado o vuelo bajo.
 
-#### Área de meta y atajada con las manos
+#### Área de meta y atajada con las manos (automática, sin botón)
 
 Cada arco tiene un **área de meta** rectangular (`FIELD.PENALTY_WIDTH` ×
 `FIELD.PENALTY_DEPTH`, dibujada en `Pitch.js`) frente a él. Dentro de SU
-propia área (`GameRoom.isInOwnPenaltyArea`), si el arquero está en pleno
-clavado (`p.anim === ANIM.DIVE`) y el balón LIBRE está a distancia de
-control (mismo radio/altura que `CONTROL_AREA_RADIUS`/`CONTROL_AREA_HEIGHT`
-del cruzar pie normal, ver `GameRoom.canCatch`), presionar cruzar pie
-ataja el balón con las manos en vez de intentar controlarlo con el pie —
-`ball.ownerId` pasa al arquero con un flag extra `ball.caught = true`.
-Con ese flag, `dribble()` deja de perseguir el punto habitual a los pies
-y en cambio fija el balón cerca del pecho (`owner.pos + forward·0.35`,
-altura `owner.pos.y + 1.15`) — y no lo suelta aunque el arquero siga
-"en el aire" terminando de aterrizar del clavado (única excepción a la
-regla de soltar el balón si `owner.pos.y > 0.6`). El cliente refleja lo
-mismo en su predicción (`GameClient.local.holding`, seteado al recibir el
-evento `caught`) y muestra la pose `ANIM.CATCH` ("zombie", brazos rectos
-al frente) mientras dure la posesión — se libera recién al patear.
-**Fuera** del área de meta (o sin estar en pleno clavado), cruzar pie
-funciona exactamente igual que para cualquier jugador: control con el pie.
+propia área (`GameRoom.isInOwnPenaltyArea`), si el balón LIBRE **toca**
+el cuerpo del arquero mientras está en pleno clavado (`p.anim ===
+ANIM.DIVE`) o vuelo bajo (`p.challenge.type === 'lowdive'`), lo ataja con
+las manos automáticamente — no hace falta presionar nada, el contacto
+mismo lo dispara (`GameRoom.tick`, usa el valor de retorno `hit` de
+`collideBallWithAirborneBody`/`collideBallWithLowDiveBody` para decidir
+entre rebotar o atajar). `catchBall()` pasa `ball.ownerId` al arquero con
+un flag extra `ball.caught = true`; con ese flag, `dribble()` deja de
+perseguir el punto habitual a los pies y en cambio fija el balón cerca
+del pecho (`owner.pos + forward·0.35`, altura `owner.pos.y + 1.15`) — y
+no lo suelta aunque el arquero siga "en el aire" terminando de aterrizar
+(única excepción a la regla de soltar el balón si `owner.pos.y > 0.6`).
+El cliente refleja lo mismo en su predicción (`GameClient.local.holding`,
+seteado al recibir el evento `caught`) y muestra la pose `ANIM.CATCH`
+("zombie", brazos rectos al frente) mientras dure la posesión — se
+libera recién al patear. **Fuera** del área de meta, o sin estar en pleno
+clavado/vuelo bajo, cruzar pie sigue funcionando exactamente igual que
+para cualquier jugador: control con el pie.
 
 #### Vuelo bajo (solo arquero)
 
 Mismo gesto que la barrida, pero **lateral** en vez de hacia adelante:
 si el arquero mantiene A/D (sin W) y presiona barrida (clic derecho), en
 vez de un lunge hacia adelante hace un vuelo bajo hacia el costado
-(`onChallenge` tipo `'lowdive'`, exclusivo de `position === 'GK'`, mismo
-cooldown/slot de lunge que la barrida para no poder combinarlos). No
-controla el balón ni cobra falta — es puramente una colisión de cuerpo
+(`onChallenge` tipo `'lowdive'`, exclusivo de `position === 'GK'`). **SIN
+cooldown** (a diferencia de la barrida recta, que sí lo tiene — es la
+única acción del juego con cooldown propio) — solo no puede solaparse
+con otra acción en curso (`p.challenge` ocupado). No controla el balón ni
+cobra falta contra rivales — es puramente una colisión de cuerpo
 automática contra el balón libre (`collideBallWithLowDiveBody` en
 `physics.js`), igual que `collideBallWithSlidingBody` pero con la cápsula
 orientada hacia el costado (vector "derecha" del yaw × `side`) en vez de
-hacia adelante, porque el desplazamiento real es lateral.
+hacia adelante, porque el desplazamiento real es lateral; si el balón la
+toca dentro del área de meta, se ataja igual que en el clavado alto (ver
+arriba). La pose (`ANIM.LOW_DIVE`) usa un ROLL sobre el eje Z para caer
+de costado y quedar horizontal — antes usaba el eje X (picado hacia
+adelante), por lo que se veía como si el arquero se tirara de cabeza al
+frente en vez de estirarse hacia el costado.
+
+#### Disparo por clic izquierdo, sin interferir con la carga del remate
+
+El clavado se dispara con el **flanco de bajada** del clic izquierdo
+(`InputManager.queued.kickPress`, distinto de `kickHeld` que se mantiene
+mientras el botón sigue apretado) — así un mismo clic no dispara además
+la carga de un remate. Mientras dura el clavado (o el vuelo bajo, o la
+recuperación tendido-en-el-suelo tras aterrizar), el bloque de acciones
+completo queda bloqueado (igual que aturdido/barrida/etc.), así que
+`kickHeld` se ignora por completo — no acumula carga ni dispara un
+remate fantasma si el jugador suelta el mouse recién al aterrizar.
 
 ### Barrida: distancia según la velocidad real, no un valor fijo
 
@@ -439,15 +475,53 @@ del cliente (`GameClient` ya no setea `local.anim = ANIM.EXTEND`): la
 acción sigue funcionando igual (server-authoritative, sin cooldown), pero
 visualmente no hay pose — es un gesto instantáneo, sin metida de pie.
 
-### Altura del remate según hacia dónde mira la cámara
+### Altura del remate: desacoplada de la potencia
 
-El remate ya no sale siempre con la misma curva de elevación: el cliente
-manda el `pitch` de la cámara junto con el kick, y el servidor lo mapea a
-un multiplicador de `KICK_LIFT` entre `KICK_LIFT_PITCH_MIN_MULT` (mirando
-al piso, remate rasante) y `KICK_LIFT_PITCH_MAX_MULT` (mirando al cielo,
-remate más alto) — interpolado linealmente sobre el rango de pitch de la
-cámara (`CAMERA.PITCH_MIN/MAX`, ahora en `shared/constants.js` para que
-`CameraController` y el servidor usen exactamente el mismo rango).
+Primera versión: la altura dependía de `charge` igual que la potencia
+(`liftT = (charge-0.1)/0.9`), así que con la barra casi vacía la
+elevación quedaba en ~0 sin importar hacia dónde mirara la cámara —
+imposible levantar un centro corto y controlable, solo pelotazos largos
+con algo de altura si además se cargaba fuerte.
+
+Ahora la altura (`ball.vel.y`) es una suma de tres términos independientes
+(`GameRoom.onKick`, mismo cálculo replicado en el cliente para la
+previsualización — ver abajo):
+
+```
+vel.y = KICK_LIFT_BASE + pitchNorm · KICK_LIFT_PITCH_MAX + charge · KICK_LIFT_CHARGE_BONUS
+```
+
+- `KICK_LIFT_BASE` (0.4): lift residual incluso mirando al piso — nunca
+  sale 100% pegado al suelo.
+- `pitchNorm · KICK_LIFT_PITCH_MAX` (hasta 9.5): el término dominante,
+  depende SOLO de hacia dónde apunta la cámara verticalmente
+  (`pitchNorm` normaliza `CAMERA.PITCH_MIN/MAX` a 0=piso..1=cielo) — con
+  esto, incluso un toque al 5% de carga mirando bien arriba levanta el
+  balón por encima de la altura de la cabeza (~1.8 m), habilitando centros
+  cortos y controlables.
+- `charge · KICK_LIFT_CHARGE_BONUS` (hasta 4): un extra menor según la
+  potencia, para que los remates a barra llena también puedan salir con
+  comba (no solo los suaves).
+
+La potencia (`speed`, distancia horizontal) sigue dependiendo solo de
+`charge`, sin tocar — quedan dos ejes de control totalmente
+independientes: cuánto se carga la barra = qué tan lejos/fuerte sale;
+hacia dónde mira la cámara = qué tan alto sale.
+
+### Recorrido previsto del remate (previsualización en vivo)
+
+La barra de poder ya no solo muestra una línea recta sobre el césped: la
+`aimLine` ahora es una `THREE.Line` con una `BufferGeometry` dinámica de
+hasta `AIM_TRAJECTORY_POINTS` puntos, recalculada cada frame mientras se
+carga (`GameClient.updateAimTrajectory`, llamada desde `updateLocalPlayer`
+en vez de solo ajustar `scale.z`). Muestrea la parábola real integrando
+gravedad (mismo `BALL.GRAVITY`) con la MISMA física que aplicará el
+servidor — misma curva de potencia por tramos y misma fórmula de altura
+por pitch que `GameRoom.onKick` — y corta el muestreo (`setDrawRange`) en
+cuanto la curva toca el piso, así el largo de la línea también refleja el
+alcance real. Al depender de `kickCharge` y `cameraCtrl.pitch` en cada
+llamada, la curva se ajusta en vivo a medida que se carga la barra o se
+mueve la cámara.
 
 ### Controles táctiles (móvil)
 

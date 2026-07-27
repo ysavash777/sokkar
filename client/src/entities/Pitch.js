@@ -49,8 +49,8 @@ export function createPitch() {
   circle.position.y = 0.01;
   pitch.add(circle);
 
-  // Área de meta: rectángulo frente a cada arco donde el arquero puede
-  // atajar el balón con las manos (ver ACTIONS/GameRoom.canCatch).
+  // Área de meta: rectángulo frente a cada arco donde el arquero ataja el
+  // balón con las manos automáticamente (ver GameRoom.isInOwnPenaltyArea).
   const boxDepth = FIELD.PENALTY_DEPTH;
   const boxHalfW = FIELD.PENALTY_WIDTH / 2;
   const drawPenaltyArea = (sign) => {

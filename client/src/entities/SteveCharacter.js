@@ -265,15 +265,31 @@ export class SteveCharacter {
     }
 
     if (s === ANIM.LOW_DIVE) {
-      // Vuelo bajo del arquero: mismo vuelo lateral que el clavado, pero
-      // pegado al piso (cuerpo casi horizontal) en vez de saltar.
-      this.body.rotation.x = 1.3;
-      this.body.rotation.z = -0.4 * this._diveSide;
-      this.body.position.y = -0.25;
+      // Vuelo bajo del arquero: cae de costado y queda horizontal — es un
+      // ROLL sobre Z (rotation.z), NO un picado hacia adelante
+      // (rotation.x, que es lo que hacía antes y se veía como si se
+      // tirara de cabeza al frente en vez de estirarse hacia el costado).
+      this.body.rotation.x = 0.1;
+      this.body.rotation.z = -1.3 * this._diveSide;
+      this.body.position.y = -0.35;
       poseLimb(this.legL, 0);
       poseLimb(this.legR, 0);
       poseLimb(this.armL, -2.6);
       poseLimb(this.armR, -2.6);
+      return;
+    }
+
+    if (s === ANIM.DIVE_GROUND) {
+      // Arquero recién aterrizado del clavado: tendido de costado hacia el
+      // lado real por el que voló, antes de levantarse (en vez de saltar
+      // de golpe del vuelo a la pose de pie).
+      this.body.rotation.x = 0.1;
+      this.body.rotation.z = -1.4 * this._diveSide;
+      this.body.position.y = -0.4;
+      poseLimb(this.legL, 0);
+      poseLimb(this.legR, 0);
+      poseLimb(this.armL, -1.8);
+      poseLimb(this.armR, -1.8);
       return;
     }
 

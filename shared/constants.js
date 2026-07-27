@@ -60,9 +60,10 @@ export const PLAYER = {
   STAMINA_REGEN_IDLE_MULT: 1.6,
   STAMINA_MIN_TO_SPRINT: 10,
   // Arquero: clavado lateral a media altura mientras salta y se mueve al
-  // costado (reusa el botón de cruzar pie). Solo disponible en posición GK.
+  // costado (con clic izquierdo). Solo disponible en posición GK.
   DIVE_SIDE_SPEED: 6.5,
   DIVE_HEIGHT_MULT: 0.5, // fracción de la altura de salto normal
+  DIVE_GROUND_MS: 650, // al aterrizar, queda tendido de costado antes de levantarse
   // Umbral de altura para considerar a un jugador "en el aire" a efectos
   // de la colisión automática con el balón (salto, clavado, etc.).
   AIRBORNE_COLLISION_MIN_Y: 0.15,
@@ -88,15 +89,18 @@ export const ACTIONS = {
   KICK_PIVOT_SPEED: 16.5, // velocidad en KICK_PIVOT_CHARGE
   KICK_LOW_CURVE: 2, // exponente del tramo [0, PIVOT]: ease-in suave (toque sigue siendo toque)
   KICK_CURVE: 1.15, // exponente del tramo [PIVOT, 1]: crecimiento sostenido hasta el máximo
-  KICK_LIFT: 8,
   KICK_RANGE: 1.5,
   KICK_CHARGE_TIME_MS: 900,
   RECAPTURE_DELAY_MS: 450, // quien patea no re-captura su propio pase al instante
-  // Altura del remate según hacia dónde mira verticalmente la cámara
-  // (pitch): mirando al piso, el remate sale rasante; mirando al cielo,
-  // sale más alto. Multiplica a KICK_LIFT.
-  KICK_LIFT_PITCH_MIN_MULT: 0.3, // mirando al piso
-  KICK_LIFT_PITCH_MAX_MULT: 1.9, // mirando al cielo
+  // Altura del remate: DESACOPLADA de la potencia — la controla sobre todo
+  // hacia dónde mira verticalmente la cámara (pitch), no cuánto se cargó
+  // la barra. Así un toque mínimo (poca potencia/distancia) apuntando bien
+  // arriba igual levanta el balón lo suficiente para un centro/globo corto
+  // y controlable, en vez de quedar atado a rematar fuerte para poder
+  // levantarla. vel.y = BASE + pitchNorm*PITCH_MAX + charge*CHARGE_BONUS.
+  KICK_LIFT_BASE: 0.4, // lift residual incluso mirando al piso (nunca 100% pegado)
+  KICK_LIFT_PITCH_MAX: 9.5, // lift máximo por apuntar la cámara al cielo (solo)
+  KICK_LIFT_CHARGE_BONUS: 4, // lift extra según la carga (comba en remates de potencia)
 
   // Cruzar pie (clic ruedita): SIN cooldown — se puede spamear o cronometrar.
   // Controla/roba el balón si está dentro del área de control circular
@@ -121,12 +125,13 @@ export const ACTIONS = {
   SLIDE_BODY_FOUL_RADIUS: 0.7, // contacto de cuerpo durante la barrida
 
   // Vuelo bajo (solo arquero): mismo gesto que la barrida pero lateral,
-  // se dispara con barrida + A/D en vez de W/línea recta. No controla ni
-  // cobra falta — es una colisión de cuerpo automática contra el balón
-  // libre, igual que la barrida pero hacia el costado.
+  // se dispara con barrida + A/D en vez de W/línea recta. SIN cooldown
+  // (el cooldown es exclusivo de la barrida recta) — no controla ni cobra
+  // falta, es una colisión de cuerpo automática contra el balón libre,
+  // igual que la barrida pero hacia el costado; si el balón la toca, el
+  // arquero se la queda atajada en las manos (igual que en el clavado alto).
   LOW_DIVE_SPEED: 7,
   LOW_DIVE_DURATION_MS: 550,
-  LOW_DIVE_COOLDOWN_MS: 2200,
 
   STEAL_RADIUS: 0.62, // el pie debe conectar realmente con la pelota
   FOUL_RADIUS: 0.48, // radio de las piernas del rival para cobrar falta
@@ -165,6 +170,7 @@ export const ANIM = {
   DIVE: 9, // clavado lateral del arquero (en el aire)
   CATCH: 10, // arquero con el balón atajado en las manos
   LOW_DIVE: 11, // vuelo bajo del arquero (lateral, pegado al piso)
+  DIVE_GROUND: 12, // arquero tendido de costado, recién aterrizado del clavado
 };
 
 export const TEAM_COLORS = [0xd63b3b, 0x2f6fd6]; // rojo vs azul
