@@ -226,28 +226,9 @@ export class GameClient {
 
     // ---- acciones
     if (!stunned && !sliding && !knocked && !lowDiving && !L.diving && !diveGrounded) {
-      // Arquero: clavado a media altura con clic izquierdo (no cargar el
-      // remate) mientras está en el aire y se mueve claramente al costado.
-      // Si el balón toca su cuerpo durante el vuelo, el servidor lo ataja
-      // solo (ver GameRoom.tick / catchBall) — no hace falta otro botón.
-      let diveTriggered = false;
-      if (this.myPosition === 'GK' && !L.onGround) {
-        const axis = this.input.moveAxis;
-        if (Math.abs(axis.x) > 0.3 && this.input.consume('kickPress')) {
-          const camYaw = this.cameraCtrl.yaw;
-          const side = Math.sign(axis.x);
-          L.diving = true;
-          L.diveDirX = -side * Math.cos(camYaw);
-          L.diveDirZ = side * Math.sin(camYaw);
-          L.velY = PLAYER.JUMP_SPEED * Math.sqrt(PLAYER.DIVE_HEIGHT_MULT);
-          diveTriggered = true;
-        }
-      }
-
       // Remate cargado (sin cooldown): mantener clic izq llena la barra
       // y muestra el recorrido previsto según la cámara.
-      if (!diveTriggered) this.input.consume('kickPress');
-      if (!diveTriggered && this.input.kickHeld) {
+      if (this.input.kickHeld) {
         this.kickCharge = Math.min(1, this.kickCharge + (dt * 1000) / ACTIONS.KICK_CHARGE_TIME_MS);
       }
       if (this.input.consume('kickRelease')) {
@@ -268,24 +249,39 @@ export class GameClient {
       if (!controllingBall && this.input.consume('extend')) {
         this.net.sendChallenge('extend');
       }
-      if (!controllingBall && this.input.consume('slide') && L.onGround) {
+      // Clic derecho: en el aire (arquero, moviéndose claramente al
+      // costado) dispara el clavado; parado, es barrida normal salvo que
+      // el arquero mantenga A/D sin W, ahí es vuelo bajo. Mismo botón,
+      // se ramifica según esté en el aire o no.
+      if (!controllingBall && this.input.consume('slide')) {
         const axis = this.input.moveAxis;
-        // Arquero moviéndose al costado (A/D, sin W) + barrida = vuelo
-        // bajo en vez de barrida normal — la barrida sigue siendo en
-        // línea recta o presionando W. El vuelo bajo NO tiene cooldown
-        // (solo la barrida recta lo tiene).
-        if (this.myPosition === 'GK' && Math.abs(axis.x) > 0.3 && Math.abs(axis.z) < 0.4) {
-          const camYaw = this.cameraCtrl.yaw;
-          const side = Math.sign(axis.x);
-          this.net.sendChallenge('lowdive', { side });
-          L.lowDiveUntil = now + ACTIONS.LOW_DIVE_DURATION_MS;
-          L.lowDiveDirX = -side * Math.cos(camYaw);
-          L.lowDiveDirZ = side * Math.sin(camYaw);
-        } else if (now > L.slideCdUntil) {
-          this.net.sendChallenge('slide');
-          L.slideUntil = now + ACTIONS.SLIDE_DURATION_MS;
-          L.slideCdUntil = now + ACTIONS.SLIDE_COOLDOWN_MS;
-          L.slideDir = L.yaw;
+        if (this.myPosition === 'GK' && !L.onGround) {
+          if (Math.abs(axis.x) > 0.3) {
+            const camYaw = this.cameraCtrl.yaw;
+            const side = Math.sign(axis.x);
+            L.diving = true;
+            L.diveDirX = -side * Math.cos(camYaw);
+            L.diveDirZ = side * Math.sin(camYaw);
+            L.velY = PLAYER.JUMP_SPEED * Math.sqrt(PLAYER.DIVE_HEIGHT_MULT);
+          }
+        } else if (L.onGround) {
+          // Arquero moviéndose al costado (A/D, sin W) + barrida = vuelo
+          // bajo en vez de barrida normal — la barrida sigue siendo en
+          // línea recta o presionando W. El vuelo bajo NO tiene cooldown
+          // (solo la barrida recta lo tiene).
+          if (this.myPosition === 'GK' && Math.abs(axis.x) > 0.3 && Math.abs(axis.z) < 0.4) {
+            const camYaw = this.cameraCtrl.yaw;
+            const side = Math.sign(axis.x);
+            this.net.sendChallenge('lowdive', { side });
+            L.lowDiveUntil = now + ACTIONS.LOW_DIVE_DURATION_MS;
+            L.lowDiveDirX = -side * Math.cos(camYaw);
+            L.lowDiveDirZ = side * Math.sin(camYaw);
+          } else if (now > L.slideCdUntil) {
+            this.net.sendChallenge('slide');
+            L.slideUntil = now + ACTIONS.SLIDE_DURATION_MS;
+            L.slideCdUntil = now + ACTIONS.SLIDE_COOLDOWN_MS;
+            L.slideDir = L.yaw;
+          }
         }
       }
       if (this.input.consume('jump') && L.onGround) {
@@ -294,7 +290,6 @@ export class GameClient {
       }
     } else {
       // Descartar acciones encoladas mientras está bloqueado.
-      this.input.consume('kickPress');
       this.input.consume('kickRelease');
       this.input.consume('extend');
       this.input.consume('slide');

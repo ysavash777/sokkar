@@ -351,20 +351,20 @@ de quien lo eligió.
 
 Solo un jugador en posición `GK` puede hacer el **clavado lateral**:
 mientras está en el aire (ya saltó) y se mueve claramente al costado
-(input de strafe > 0.3), presionar **clic izquierdo** (no cargarlo como
-remate) dispara un salto lateral a **media altura** (`DIVE_HEIGHT_MULT =
+(input de strafe > 0.3), presionar **clic derecho** (el mismo botón de la
+barrida) dispara un salto lateral a **media altura** (`DIVE_HEIGHT_MULT =
 0.5`, la velocidad vertical se relanza a `JUMP_SPEED·√0.5` para que el
 pico sea la mitad) con deriva constante hacia el costado
 (`DIVE_SIDE_SPEED`) hasta aterrizar — sin control de WASD durante el
-clavado. El disparo usa el flanco de bajada del clic (`InputManager`
-expone `queued.kickPress`, distinto de `kickHeld`) para no confundirse
-con la carga normal del remate — mientras dura el clavado, `kickHeld`
-queda completamente ignorado (no se acumula carga ni se dispara un
-remate fantasma al soltar el mouse en el aire). No hace falta nada
-especial para que colisione con el balón: al estar en el aire, ya cae
-bajo la colisión aérea automática de arriba (misma lógica de zonas,
-misma cápsula) — y si esa colisión ocurre dentro de SU área de meta, en
-vez de rebotar la ataja con las manos (ver "Área de meta" más abajo).
+clavado. `GameClient` ramifica un único `consume('slide')`: en el aire +
+strafe → clavado; parado → barrida normal o vuelo bajo (ver más abajo) —
+así el mismo botón cubre las tres variantes según el estado del jugador,
+sin pisar la carga del remate (que sigue siendo clic izquierdo,
+completamente aparte). No hace falta nada especial para que colisione
+con el balón: al estar en el aire, ya cae bajo la colisión aérea
+automática de arriba (misma lógica de zonas, misma cápsula) — y si esa
+colisión ocurre dentro de SU área de meta, en vez de rebotar la ataja
+con las manos (ver "Área de meta" más abajo).
 
 Al aterrizar, el arquero no vuelve directo a la pose de pie: queda
 **tendido de costado** (`ANIM.DIVE_GROUND`, `PLAYER.DIVE_GROUND_MS` ≈
@@ -444,16 +444,15 @@ de costado y quedar horizontal — antes usaba el eje X (picado hacia
 adelante), por lo que se veía como si el arquero se tirara de cabeza al
 frente en vez de estirarse hacia el costado.
 
-#### Disparo por clic izquierdo, sin interferir con la carga del remate
+#### Un solo botón (clic derecho) para las tres variantes
 
-El clavado se dispara con el **flanco de bajada** del clic izquierdo
-(`InputManager.queued.kickPress`, distinto de `kickHeld` que se mantiene
-mientras el botón sigue apretado) — así un mismo clic no dispara además
-la carga de un remate. Mientras dura el clavado (o el vuelo bajo, o la
-recuperación tendido-en-el-suelo tras aterrizar), el bloque de acciones
-completo queda bloqueado (igual que aturdido/barrida/etc.), así que
-`kickHeld` se ignora por completo — no acumula carga ni dispara un
-remate fantasma si el jugador suelta el mouse recién al aterrizar.
+`GameClient` consume el input `'slide'` (clic derecho) UNA vez por click
+y recién ahí decide qué hacer, según el estado del jugador en ese
+instante: arquero + en el aire + strafe marcado → clavado; arquero + en
+el piso + A/D sin W → vuelo bajo; cualquier otro caso en el piso →
+barrida normal. Esto evita duplicar el manejo del botón y mantiene la
+carga del remate (clic izquierdo, `kickHeld`) totalmente aparte — nunca
+se pisan entre sí.
 
 ### Barrida: distancia según la velocidad real, no un valor fijo
 

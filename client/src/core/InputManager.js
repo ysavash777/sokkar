@@ -13,11 +13,8 @@ export class InputManager {
     this.mouseDX = 0;
     this.mouseDY = 0;
     this.kickHeld = false; // clic izq mantenido = cargando remate
-    // Acciones one-shot que el game loop consume. kickPress marca el
-    // FLANCO de bajada del clic izq (se dispara una sola vez al presionar,
-    // a diferencia de kickHeld que se mantiene) — lo usa el arquero para
-    // el clavado (ver GameClient), sin interferir con la carga del remate.
-    this.queued = { kickRelease: false, kickPress: false, extend: false, slide: false, jump: false };
+    // Acciones one-shot que el game loop consume.
+    this.queued = { kickRelease: false, extend: false, slide: false, jump: false };
 
     // Override táctil del eje de movimiento (joystick virtual). Cuando
     // está activo reemplaza a WASD; se desactiva solo al soltar el stick.
@@ -39,10 +36,8 @@ export class InputManager {
         canvas.requestPointerLock();
         return;
       }
-      if (e.button === 0) {
-        this.kickHeld = true;
-        this.queued.kickPress = true;
-      } else if (e.button === 1) this.queued.extend = true;
+      if (e.button === 0) this.kickHeld = true;
+      else if (e.button === 1) this.queued.extend = true;
       else if (e.button === 2) this.queued.slide = true;
     });
 
@@ -96,7 +91,6 @@ export class InputManager {
   }
 
   setKickHeld(held) {
-    if (!this.kickHeld && held) this.queued.kickPress = true;
     if (this.kickHeld && !held) this.queued.kickRelease = true;
     this.kickHeld = held;
   }

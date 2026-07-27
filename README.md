@@ -26,8 +26,8 @@ arquero puede hacer el clavado lateral (ver Controles).
 | `Espacio` | Salto |
 | `Clic izquierdo (mantener)` | Cargar remate: barra de poder + recorrido previsto según potencia y hacia dónde mirás con la cámara; se dispara al soltar (sin cooldown) |
 | `Clic ruedita` | Cruzar pie (sin cooldown) — controla/roba el balón dentro del círculo bajo tus pies, en cualquier ángulo |
-| `Clic derecho` | Barrida (única acción con cooldown) |
-| `Clic izquierdo en el aire` (solo arquero) | Clavado lateral a media altura, hacia donde te estés moviendo con A/D |
+| `Clic derecho` | Barrida (única acción con cooldown) — en el piso, en línea recta o con W |
+| `Clic derecho en el aire` (solo arquero) | Clavado lateral a media altura, hacia donde te estés moviendo con A/D (sin cooldown) |
 | `Clic derecho + A/D (sin W)` (solo arquero) | Vuelo bajo: mismo clavado pero pegado al piso, sin cooldown |
 
 > Cruzar pie: metida de pie sutil y breve. Si la pelota está dentro del
