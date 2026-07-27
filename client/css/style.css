@@ -114,6 +114,11 @@ body {
   opacity: 0.65;
 }
 
+/* En móvil los controles son el joystick/botones táctiles, no WASD+mouse. */
+body.is-mobile .controls-help {
+  display: none;
+}
+
 /* ---------- HUD ---------- */
 #hud {
   position: fixed;
@@ -223,4 +228,175 @@ body {
   100% {
     opacity: 0;
   }
+}
+
+/* ---------- Controles táctiles (móvil) ---------- */
+#touch-controls {
+  --touch-scale: 1;
+  --touch-opacity: 0.75;
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.touch-corner-btn {
+  position: fixed;
+  top: 14px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+#touch-fullscreen-btn {
+  right: 14px;
+}
+
+#touch-edit-btn {
+  right: 62px;
+}
+
+.touch-joystick-base,
+.touch-btn {
+  position: fixed;
+  transform: translate(-50%, -50%) scale(var(--touch-scale));
+  opacity: var(--touch-opacity);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-joystick-base {
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.35);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+}
+
+.touch-joystick-stick {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  transform: translate(-50%, -50%);
+  transition: transform 0.05s linear;
+}
+
+.touch-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.touch-btn-big {
+  width: 74px;
+  height: 74px;
+  font-size: 1.6rem;
+  background: rgba(34, 197, 94, 0.35);
+  border-color: rgba(34, 197, 94, 0.6);
+}
+
+.touch-btn.active {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.touch-btn.toggled {
+  background: rgba(34, 197, 94, 0.55);
+  border-color: #4ade80;
+}
+
+/* Modo edición: contorno punteado para indicar que se puede arrastrar. */
+#touch-controls.edit-mode .touch-joystick-base,
+#touch-controls.edit-mode .touch-btn {
+  outline: 2px dashed rgba(255, 255, 255, 0.8);
+  outline-offset: 3px;
+  opacity: 1;
+}
+
+#touch-settings-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(320px, 84vw);
+  background: rgba(11, 18, 32, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  padding: 18px 20px;
+  color: #fff;
+  pointer-events: auto;
+  z-index: 31;
+}
+
+.touch-settings-title {
+  font-weight: 800;
+  font-size: 1.05rem;
+  margin-bottom: 4px;
+}
+
+.touch-settings-hint {
+  opacity: 0.65;
+  font-size: 0.8rem;
+  margin-bottom: 14px;
+}
+
+#touch-settings-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+#touch-settings-panel input[type='range'] {
+  width: 100%;
+}
+
+.touch-settings-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.touch-settings-actions button {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  border: none;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#touch-reset-btn {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+#touch-done-btn {
+  background: #22c55e;
+  color: #052e16;
 }

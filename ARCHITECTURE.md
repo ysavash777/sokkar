@@ -31,12 +31,14 @@ sokkaio/
     └── src/
         ├── main.js          # Bootstrap: renderer, escena, luces, loop
         ├── core/
-        │   ├── InputManager.js     # Teclado/mouse + pointer lock
+        │   ├── InputManager.js     # Teclado/mouse + pointer lock; también recibe input táctil
         │   └── CameraController.js # Cámara orbital 360°
         ├── entities/
         │   ├── SteveCharacter.js   # Personaje (glTF de Blockbench) + animación procedural
         │   ├── Ball.js             # Balón (render + rodadura visual)
         │   └── Pitch.js            # Cancha, líneas, arcos (solo colores)
+        ├── mobile/
+        │   └── MobileControls.js   # Detección de móvil + joystick/botones táctiles + modo edición
         ├── game/
         │   └── GameClient.js       # Predicción local + interpolación remota
         ├── net/
@@ -356,6 +358,44 @@ deriva constante hacia el costado (`DIVE_SIDE_SPEED`) hasta aterrizar —
 sin control de WASD durante el clavado. No hace falta nada especial para
 que colisione con el balón: al estar en el aire, ya cae bajo la colisión
 aérea automática de arriba (misma lógica de zonas, misma cápsula).
+
+### Controles táctiles (móvil)
+
+`isMobileDevice()` (en `MobileControls.js`) detecta móvil por
+`matchMedia('(pointer: coarse)')` **y** soporte touch (`ontouchstart`/
+`maxTouchPoints`) a la vez — así una laptop con pantalla táctil (puntero
+preciso) no cae en el modo móvil por error. `main.js` la chequea una sola
+vez al bootear: si es móvil, agrega `body.is-mobile` (oculta la ayuda de
+teclado en la pantalla de ingreso) e instancia `MobileControls`, y evita
+pedir pointer lock (`input.lock()`), que no aplica a touch.
+
+**`InputManager` es la única fuente de verdad de input**: `MobileControls`
+no toca `GameClient` en absoluto, solo llama a métodos nuevos del mismo
+`InputManager` que ya usan teclado/mouse (`setTouchAxis`, `trigger`,
+`setKickHeld`, `setTouchSprint`, `addLookDelta`) — por eso `GameClient.js`
+no necesitó ningún cambio para soportar touch. `moveAxis` prioriza
+`touchAxis` sobre WASD cuando el joystick está activo; `sprint` es
+`Shift || touchSprint`.
+
+`MobileControls` arma un joystick (drag dentro de un radio máximo → eje
+`{x, z}` normalizado, `z` invertido porque arrastrar hacia arriba en
+pantalla es "adelante") y cinco botones de acción (patear = mantener/soltar
+igual que el clic izquierdo; cruzar pie/barrida/salto = one-shot; sprint =
+toggle). Arrastrar sobre el resto del canvas (fuera de joystick/botones)
+alimenta `addLookDelta` con el delta de dedo en píxeles — mismo canal que
+`movementX/Y` del mouse, así que `CameraController` no distingue el origen.
+
+**Modo edición**: el botón ⚙ activa `editMode`, que (a) muestra un panel con
+sliders de tamaño/opacidad (escritos como CSS custom properties
+`--touch-scale`/`--touch-opacity` en el contenedor raíz) y botones
+Restablecer/Listo, y (b) hace que cada control (joystick y botones) se
+vuelva arrastrable — mismo listener de `touchmove` que en juego, pero
+gateado por `editMode` en vez de disparar la acción. Layout (posiciones en
+% de viewport) y preferencias (escala/opacidad) se guardan por separado en
+`localStorage` (`sokkaio.touchControls.layout` / `.prefs`) y se recargan al
+instanciar. Al entrar en modo edición se limpia cualquier input táctil
+activo (`setTouchAxis(null)`, `setKickHeld(false)`) para que no quede un
+movimiento o remate "pegado" mientras el jugador reacomoda los controles.
 
 ## Optimización (anti-lag)
 

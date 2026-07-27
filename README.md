@@ -74,6 +74,21 @@ arquero puede hacer el clavado lateral (ver Controles).
 > sigas apretando Shift**, aunque ya no puedas sprintar. Soltalo para que
 > vuelva a cargar (más rápido si estás parado del todo).
 
+## Móvil
+
+En un dispositivo táctil (detección automática por `pointer: coarse` +
+soporte touch) el juego reemplaza teclado/mouse por controles en pantalla:
+
+- **Joystick** virtual (abajo a la izquierda) para moverse.
+- **Botones de acción**: patear (mantener para cargar potencia, soltar para
+  rematar), cruzar pie, barrida, salto y sprint (toggle).
+- Arrastrar el dedo sobre el resto de la pantalla mueve la cámara (equivalente
+  al mouse).
+- Botón de **pantalla completa** (⛶, arriba a la derecha).
+- Botón de **configurar** (⚙): entra en modo edición para arrastrar cada
+  control a otra posición y ajustar tamaño/opacidad con dos sliders. Todo se
+  guarda en el dispositivo (`localStorage`) y persiste entre partidas.
+
 ## Correr en local
 
 ```bash

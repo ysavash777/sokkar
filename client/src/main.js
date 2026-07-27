@@ -3,6 +3,7 @@ import { InputManager } from './core/InputManager.js';
 import { NetworkClient } from './net/NetworkClient.js';
 import { GameClient } from './game/GameClient.js';
 import { HUD } from './ui/HUD.js';
+import { MobileControls, isMobileDevice } from './mobile/MobileControls.js';
 
 /**
  * Punto de entrada: renderer optimizado, escena, bucle principal
@@ -36,6 +37,16 @@ const input = new InputManager(canvas);
 const net = new NetworkClient();
 const hud = new HUD();
 const game = new GameClient({ scene, camera, input, net, hud });
+
+// En móvil: joystick + botones táctiles en vez de teclado/mouse, y no se
+// usa pointer lock (la cámara se mueve arrastrando el dedo, ver
+// MobileControls). document.body marca ".is-mobile" para adaptar el CSS
+// (p.ej. ocultar la ayuda de controles de escritorio en la pantalla de ingreso).
+const mobile = isMobileDevice();
+if (mobile) {
+  document.body.classList.add('is-mobile');
+  new MobileControls(input, canvas);
+}
 
 // ---------------------------------------------------------------- unión
 
@@ -85,7 +96,7 @@ const prevJoined = net.handlers.joined;
 net.on('joined', (data) => {
   prevJoined?.(data);
   joinScreen.classList.add('hidden');
-  input.lock();
+  if (!mobile) input.lock(); // pointer lock es cosa de mouse; en móvil no aplica
 });
 // GameClient registró 'joined' antes; reencadenamos para ocultar la pantalla.
 

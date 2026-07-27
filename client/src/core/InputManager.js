@@ -1,7 +1,10 @@
 /**
- * Captura teclado + mouse con pointer lock.
- * Mapa: WASD mover, Shift sprint, Espacio salto,
- * clic izq patear, clic rueda cruzar pie, clic der barrida.
+ * Captura teclado + mouse (con pointer lock) y, en móvil, los controles
+ * táctiles virtuales (ver mobile/MobileControls.js). Mapa desktop: WASD
+ * mover, Shift sprint, Espacio salto, clic izq patear, clic rueda cruzar
+ * pie, clic der barrida. Ambas fuentes escriben al mismo estado interno,
+ * así que el resto del juego (GameClient) no distingue de dónde vino
+ * cada input.
  */
 export class InputManager {
   constructor(canvas) {
@@ -12,6 +15,11 @@ export class InputManager {
     this.kickHeld = false; // clic izq mantenido = cargando remate
     // Acciones one-shot que el game loop consume.
     this.queued = { kickRelease: false, extend: false, slide: false, jump: false };
+
+    // Override táctil del eje de movimiento (joystick virtual). Cuando
+    // está activo reemplaza a WASD; se desactiva solo al soltar el stick.
+    this.touchAxis = null; // { x, z } en [-1, 1] o null (sin joystick activo)
+    this.touchSprint = false; // botón de sprint táctil (toggle)
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
@@ -70,7 +78,35 @@ export class InputManager {
     return v;
   }
 
+  // ---------------------------------------------------------- entrada táctil
+
+  /** Joystick virtual: x/z en [-1, 1], o null para soltarlo (vuelve a WASD). */
+  setTouchAxis(axis) {
+    this.touchAxis = axis;
+  }
+
+  /** Botones virtuales: mismo canal que el teclado/mouse (one-shot). */
+  trigger(action) {
+    this.queued[action] = true;
+  }
+
+  setKickHeld(held) {
+    if (this.kickHeld && !held) this.queued.kickRelease = true;
+    this.kickHeld = held;
+  }
+
+  setTouchSprint(held) {
+    this.touchSprint = held;
+  }
+
+  /** Arrastre de dedo para mirar (equivalente táctil de movementX/Y del mouse). */
+  addLookDelta(dx, dy) {
+    this.mouseDX += dx;
+    this.mouseDY += dy;
+  }
+
   get moveAxis() {
+    if (this.touchAxis) return this.touchAxis;
     let x = 0;
     let z = 0;
     if (this.keys.has('KeyW')) z += 1;
@@ -81,6 +117,6 @@ export class InputManager {
   }
 
   get sprint() {
-    return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.touchSprint;
   }
 }
