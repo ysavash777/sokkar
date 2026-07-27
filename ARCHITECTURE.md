@@ -359,6 +359,96 @@ sin control de WASD durante el clavado. No hace falta nada especial para
 que colisione con el balón: al estar en el aire, ya cae bajo la colisión
 aérea automática de arriba (misma lógica de zonas, misma cápsula).
 
+#### Dirección real de la animación (no un signo fijo)
+
+El impulso del clavado (`diveDirX/Z`) siempre fue correcto para ambos
+lados, pero la pose (`ANIM.DIVE` en `SteveCharacter`) usaba un
+`rotation.z` constante — se veía "hacia la izquierda" sin importar hacia
+qué lado se tirara el arquero. `SteveCharacter.update()` ahora deriva el
+lado real cada frame a partir del **movimiento observado** (delta de
+posición del propio `group` sobre el vector "derecha" del yaw actual,
+`this._diveSide`), no de un dato explícito — así funciona igual para el
+jugador local que para remotos (interpolados desde la red), sin mandar
+nada extra por el socket. La pose en sí se rehizo: cuerpo completamente
+recto (`rotation.x = 0`) y ambos brazos rectos hacia el cielo (mismo
+ángulo que usa `ANIM.JUMP` para "brazos arriba"), con el único lean hacia
+el lado real en `rotation.z = -0.6 * diveSide`.
+
+#### Colisión automática de cuerpo (sin cruzar pie)
+
+A diferencia de un jugador de campo (que deja pasar el balón libre "entre
+las piernas" salvo que presione cruzar pie o se barra), el **arquero de
+pie también es sólido** contra el balón libre en todo momento
+(`collideBallWithPlayer` en el tick, cuando no está en el aire ni
+barriéndose/volando bajo) — bloquea/rebota automáticamente, como un
+arquero real parado en el camino de un remate. Esto NO controla el
+balón — solo lo desvía; atajarlo de verdad (ver abajo) requiere el input
+explícito.
+
+#### Área de meta y atajada con las manos
+
+Cada arco tiene un **área de meta** rectangular (`FIELD.PENALTY_WIDTH` ×
+`FIELD.PENALTY_DEPTH`, dibujada en `Pitch.js`) frente a él. Dentro de SU
+propia área (`GameRoom.isInOwnPenaltyArea`), si el arquero está en pleno
+clavado (`p.anim === ANIM.DIVE`) y el balón LIBRE está a distancia de
+control (mismo radio/altura que `CONTROL_AREA_RADIUS`/`CONTROL_AREA_HEIGHT`
+del cruzar pie normal, ver `GameRoom.canCatch`), presionar cruzar pie
+ataja el balón con las manos en vez de intentar controlarlo con el pie —
+`ball.ownerId` pasa al arquero con un flag extra `ball.caught = true`.
+Con ese flag, `dribble()` deja de perseguir el punto habitual a los pies
+y en cambio fija el balón cerca del pecho (`owner.pos + forward·0.35`,
+altura `owner.pos.y + 1.15`) — y no lo suelta aunque el arquero siga
+"en el aire" terminando de aterrizar del clavado (única excepción a la
+regla de soltar el balón si `owner.pos.y > 0.6`). El cliente refleja lo
+mismo en su predicción (`GameClient.local.holding`, seteado al recibir el
+evento `caught`) y muestra la pose `ANIM.CATCH` ("zombie", brazos rectos
+al frente) mientras dure la posesión — se libera recién al patear.
+**Fuera** del área de meta (o sin estar en pleno clavado), cruzar pie
+funciona exactamente igual que para cualquier jugador: control con el pie.
+
+#### Vuelo bajo (solo arquero)
+
+Mismo gesto que la barrida, pero **lateral** en vez de hacia adelante:
+si el arquero mantiene A/D (sin W) y presiona barrida (clic derecho), en
+vez de un lunge hacia adelante hace un vuelo bajo hacia el costado
+(`onChallenge` tipo `'lowdive'`, exclusivo de `position === 'GK'`, mismo
+cooldown/slot de lunge que la barrida para no poder combinarlos). No
+controla el balón ni cobra falta — es puramente una colisión de cuerpo
+automática contra el balón libre (`collideBallWithLowDiveBody` en
+`physics.js`), igual que `collideBallWithSlidingBody` pero con la cápsula
+orientada hacia el costado (vector "derecha" del yaw × `side`) en vez de
+hacia adelante, porque el desplazamiento real es lateral.
+
+### Barrida: distancia según la velocidad real, no un valor fijo
+
+Antes, cualquier barrida recorría la misma distancia (`SLIDE_SPEED`
+constante) sin importar si el jugador venía parado, trotando o
+sprintando. Ahora el lunge arranca con la velocidad real que traía
+(`local.curSpeed`, la misma que usa el movimiento normal) y frena solo
+por deceleración natural (`SLIDE_DECEL`, m/s²) durante la ventana de la
+barrida — parado, apenas se desliza unos centímetros; sprintando, recorre
+varios metros. La física de barrida contra el balón (`collideBallWithSlidingBody`)
+ya usaba la velocidad real estimada del jugador (`GameRoom.onPlayerState`),
+así que la potencia de la barrida contra el balón queda consistente sin
+tocar nada del lado servidor.
+
+### Cruzar pie sin animación
+
+`ANIM.EXTEND` se eliminó de la animación procedural (`SteveCharacter`) y
+del cliente (`GameClient` ya no setea `local.anim = ANIM.EXTEND`): la
+acción sigue funcionando igual (server-authoritative, sin cooldown), pero
+visualmente no hay pose — es un gesto instantáneo, sin metida de pie.
+
+### Altura del remate según hacia dónde mira la cámara
+
+El remate ya no sale siempre con la misma curva de elevación: el cliente
+manda el `pitch` de la cámara junto con el kick, y el servidor lo mapea a
+un multiplicador de `KICK_LIFT` entre `KICK_LIFT_PITCH_MIN_MULT` (mirando
+al piso, remate rasante) y `KICK_LIFT_PITCH_MAX_MULT` (mirando al cielo,
+remate más alto) — interpolado linealmente sobre el rango de pitch de la
+cámara (`CAMERA.PITCH_MIN/MAX`, ahora en `shared/constants.js` para que
+`CameraController` y el servidor usen exactamente el mismo rango).
+
 ### Controles táctiles (móvil)
 
 `isMobileDevice()` (en `MobileControls.js`) detecta móvil por

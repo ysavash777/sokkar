@@ -49,6 +49,21 @@ export function createPitch() {
   circle.position.y = 0.01;
   pitch.add(circle);
 
+  // Área de meta: rectángulo frente a cada arco donde el arquero puede
+  // atajar el balón con las manos (ver ACTIONS/GameRoom.canCatch).
+  const boxDepth = FIELD.PENALTY_DEPTH;
+  const boxHalfW = FIELD.PENALTY_WIDTH / 2;
+  const drawPenaltyArea = (sign) => {
+    const goalLineX = sign * halfL;
+    const innerX = goalLineX - sign * boxDepth;
+    const midX = (goalLineX + innerX) / 2;
+    line(0.12, boxHalfW * 2, innerX, 0); // línea de fondo del área
+    line(boxDepth, 0.12, midX, -boxHalfW); // lateral
+    line(boxDepth, 0.12, midX, boxHalfW); // lateral
+  };
+  drawPenaltyArea(-1);
+  drawPenaltyArea(1);
+
   // Arcos.
   pitch.add(createGoal(-halfL, 1));
   pitch.add(createGoal(halfL, -1));

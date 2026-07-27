@@ -263,6 +263,82 @@ export function collideBallWithSlidingBody(ball, player) {
 }
 
 /**
+ * Colisión balón vs. el cuerpo entero de un arquero en VUELO BAJO: mismo
+ * criterio que `collideBallWithSlidingBody` (cápsula cadera->pie, zonas
+ * punta/piernas/torso), pero orientada hacia el COSTADO (según `side`,
+ * +1 derecha / -1 izquierda) en vez de hacia adelante del yaw — porque el
+ * vuelo bajo se mueve lateralmente, no en línea recta.
+ */
+export function collideBallWithLowDiveBody(ball, player, side = 1) {
+  const rx = -Math.cos(player.yaw) * side;
+  const rz = Math.sin(player.yaw) * side;
+  const r = 0.32;
+  const y = 0.28;
+  const ax = player.pos.x + rx * 0.05;
+  const az = player.pos.z + rz * 0.05;
+  const bx = player.pos.x + rx * 1.15;
+  const bz = player.pos.z + rz * 1.15;
+
+  const abx = bx - ax;
+  const abz = bz - az;
+  const lenSq = abx * abx + abz * abz;
+  let t = ((ball.pos.x - ax) * abx + (ball.pos.z - az) * abz) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + abx * t;
+  const cz = az + abz * t;
+
+  const dx = ball.pos.x - cx;
+  const dy = ball.pos.y - y;
+  const dz = ball.pos.z - cz;
+  const distSq = dx * dx + dy * dy + dz * dz;
+  const minDist = BALL.RADIUS + r;
+  if (distSq >= minDist * minDist || distSq < 1e-6) return false;
+
+  const dist = Math.sqrt(distSq);
+  const nx = dx / dist;
+  const ny = dy / dist;
+  const nz = dz / dist;
+  const push = minDist - dist;
+  ball.pos.x += nx * push;
+  ball.pos.y += ny * push;
+  ball.pos.z += nz * push;
+
+  const pvx = player.vel?.x ?? 0;
+  const pvz = player.vel?.z ?? 0;
+  const playerSpeed = Math.hypot(pvx, pvz);
+  const ballSpeed = Math.hypot(ball.vel.x, ball.vel.z);
+
+  if (t > 0.7) {
+    const out = ballSpeed * 0.5 + playerSpeed * 1.1 + 1.5;
+    ball.vel.x = rx * out;
+    ball.vel.z = rz * out;
+    ball.vel.y = Math.min(2.5, out * 0.15);
+  } else if (t < 0.35) {
+    ball.vel.x = ball.vel.x * 0.15 + pvx * 0.3;
+    ball.vel.z = ball.vel.z * 0.15 + pvz * 0.3;
+    ball.vel.y = Math.abs(ball.vel.y) * 0.2;
+  } else {
+    const vn = ball.vel.x * nx + ball.vel.y * ny + ball.vel.z * nz;
+    if (vn < 0) {
+      const rest = 0.45;
+      ball.vel.x -= (1 + rest) * vn * nx;
+      ball.vel.y -= (1 + rest) * vn * ny;
+      ball.vel.z -= (1 + rest) * vn * nz;
+    }
+    ball.vel.x += pvx * 0.35;
+    ball.vel.z += pvz * 0.35;
+  }
+
+  const vnOut = ball.vel.x * nx + ball.vel.y * ny + ball.vel.z * nz;
+  if (vnOut < 0) {
+    ball.vel.x -= vnOut * nx;
+    ball.vel.y -= vnOut * ny;
+    ball.vel.z -= vnOut * nz;
+  }
+  return true;
+}
+
+/**
  * Detecta si el balón cruzó por completo la línea de gol (dentro del
  * ancho/alto del arco). No integra física, solo evalúa la posición.
  * Se usa tanto para el balón libre como para el balón conducido a los pies.

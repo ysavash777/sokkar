@@ -11,6 +11,18 @@ export const FIELD = {
   GOAL_HEIGHT: 2.6,
   GOAL_DEPTH: 2.2,
   WALL_RESTITUTION: 0.55,
+  // Área de meta: rectángulo frente a cada arco donde el arquero puede
+  // atajar con las manos (fuera de ella, controla con los pies como
+  // cualquier jugador).
+  PENALTY_WIDTH: 20,
+  PENALTY_DEPTH: 10,
+};
+
+// Rango de inclinación vertical de la cámara (pitch): también define,
+// en el remate, cuánto "mira al cielo" o "mira al piso" el jugador.
+export const CAMERA = {
+  PITCH_MIN: -0.15,
+  PITCH_MAX: 1.2,
 };
 
 export const BALL = {
@@ -80,6 +92,11 @@ export const ACTIONS = {
   KICK_RANGE: 1.5,
   KICK_CHARGE_TIME_MS: 900,
   RECAPTURE_DELAY_MS: 450, // quien patea no re-captura su propio pase al instante
+  // Altura del remate según hacia dónde mira verticalmente la cámara
+  // (pitch): mirando al piso, el remate sale rasante; mirando al cielo,
+  // sale más alto. Multiplica a KICK_LIFT.
+  KICK_LIFT_PITCH_MIN_MULT: 0.3, // mirando al piso
+  KICK_LIFT_PITCH_MAX_MULT: 1.9, // mirando al cielo
 
   // Cruzar pie (clic ruedita): SIN cooldown — se puede spamear o cronometrar.
   // Controla/roba el balón si está dentro del área de control circular
@@ -92,12 +109,24 @@ export const ACTIONS = {
   CONTROL_AREA_HEIGHT: 2.0, // cilindro de pies a cabeza: también controla balones que vienen volando
 
   // Barrida (clic derecho): si toca el balón, se lo queda pegado;
-  // si contacta al rival, es falta.
+  // si contacta al rival, es falta. La velocidad real al iniciarla
+  // (parado/trote/sprint) es el punto de partida del lunge, que después
+  // frena solo por deceleración natural (SLIDE_DECEL) — parado apenas se
+  // desliza, corriendo recorre unos metros según la velocidad previa.
   SLIDE_REACH: 1.45,
   SLIDE_DURATION_MS: 650,
-  SLIDE_SPEED: 10.5,
+  SLIDE_SPEED: 10.5, // techo histórico, ya no se usa como velocidad fija del lunge
+  SLIDE_DECEL: 9, // frenado del lunge, m/s²
   SLIDE_COOLDOWN_MS: 2200,
   SLIDE_BODY_FOUL_RADIUS: 0.7, // contacto de cuerpo durante la barrida
+
+  // Vuelo bajo (solo arquero): mismo gesto que la barrida pero lateral,
+  // se dispara con barrida + A/D en vez de W/línea recta. No controla ni
+  // cobra falta — es una colisión de cuerpo automática contra el balón
+  // libre, igual que la barrida pero hacia el costado.
+  LOW_DIVE_SPEED: 7,
+  LOW_DIVE_DURATION_MS: 550,
+  LOW_DIVE_COOLDOWN_MS: 2200,
 
   STEAL_RADIUS: 0.62, // el pie debe conectar realmente con la pelota
   FOUL_RADIUS: 0.48, // radio de las piernas del rival para cobrar falta
@@ -133,7 +162,9 @@ export const ANIM = {
   SLIDE: 6,
   STUNNED: 7,
   KNOCKED: 8, // víctima de una falta, cayendo por el impacto
-  DIVE: 9, // clavado lateral del arquero
+  DIVE: 9, // clavado lateral del arquero (en el aire)
+  CATCH: 10, // arquero con el balón atajado en las manos
+  LOW_DIVE: 11, // vuelo bajo del arquero (lateral, pegado al piso)
 };
 
 export const TEAM_COLORS = [0xd63b3b, 0x2f6fd6]; // rojo vs azul

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/utils/SkeletonUtils.js';
-import { ANIM, TEAM_COLORS, ACTIONS } from '/shared/constants.js';
+import { ANIM, TEAM_COLORS } from '/shared/constants.js';
 
 /**
  * Personaje "Steve" cargado desde un modelo .gltf hecho en Blockbench
@@ -99,8 +99,10 @@ export class SteveCharacter {
     this.position = position === 'GK' ? 'GK' : 'FIELD';
     this.walkPhase = 0;
     this.animState = ANIM.IDLE;
-    this.actionTimer = 0; // temporizador de kick/extend/slide
+    this.actionTimer = 0; // temporizador de kick/slide
     this.ready = false;
+    this._prevPos = null;
+    this._diveSide = 1; // lado real del vuelo (arquero), derivado del movimiento
 
     Promise.all([loadTemplate(), loadSkinMaterials(this.skin)]).then(([template, mats]) =>
       this._build(template, mats[this.team]),
@@ -175,7 +177,7 @@ export class SteveCharacter {
   setAnim(state) {
     if (state === this.animState) return;
     this.animState = state;
-    if (state === ANIM.KICK || state === ANIM.EXTEND || state === ANIM.SLIDE) {
+    if (state === ANIM.KICK || state === ANIM.SLIDE) {
       this.actionTimer = 0;
     }
   }
@@ -190,6 +192,20 @@ export class SteveCharacter {
     this.body.rotation.x = 0;
     this.body.rotation.z = 0;
     this.body.position.y = 0;
+
+    // Lado real del vuelo del arquero (clavado / vuelo bajo), derivado del
+    // movimiento real (no de un signo fijo) — así la animación siempre
+    // coincide con el lado hacia el que se tira, tanto local como para
+    // jugadores remotos (interpolados desde la red).
+    if (!this._prevPos) this._prevPos = this.group.position.clone();
+    if (dt > 1e-4) {
+      const vx = (this.group.position.x - this._prevPos.x) / dt;
+      const vz = (this.group.position.z - this._prevPos.z) / dt;
+      const yaw = this.group.rotation.y;
+      const lateral = vx * -Math.cos(yaw) + vz * Math.sin(yaw);
+      if (Math.abs(lateral) > 0.3) this._diveSide = Math.sign(lateral);
+    }
+    this._prevPos.copy(this.group.position);
 
     if (s === ANIM.KNOCKED) {
       // Cae hacia atrás por el empujón de la falta (el yaw ya lo orienta
@@ -224,20 +240,6 @@ export class SteveCharacter {
       return;
     }
 
-    if (s === ANIM.EXTEND) {
-      // Cruzar pie: metida de pie SUTIL hacia el balón (nada de extender
-      // mucho la pierna) — dura poco, pero se nota. Con un swing suave
-      // (seno) en vez de saltar directo a la pose, para que se perciba
-      // incluso en clics muy seguidos.
-      const t = Math.min(this.actionTimer / (ACTIONS.EXTEND_DURATION_MS / 1000), 1);
-      const swing = Math.sin(t * Math.PI); // sube y vuelve, sin quedar trabada
-      poseLimb(this.legR, -0.35 * swing);
-      poseLimb(this.legL, 0.1 * swing);
-      poseLimb(this.armL, 0.12 * swing);
-      poseLimb(this.armR, -0.12 * swing);
-      return;
-    }
-
     if (s === ANIM.STUNNED) {
       this.body.rotation.x = 0.25;
       poseLimb(this.armL, 0.6);
@@ -248,13 +250,40 @@ export class SteveCharacter {
     }
 
     if (s === ANIM.DIVE) {
-      // Clavado lateral del arquero: cuerpo estirado, brazos abiertos.
-      this.body.rotation.x = 0.45;
-      this.body.rotation.z = 0.55;
-      poseLimb(this.legL, 0.25);
-      poseLimb(this.legR, -0.25);
-      poseLimb(this.armL, -1.3);
-      poseLimb(this.armR, 1.3);
+      // Clavado lateral del arquero: cuerpo completamente estirado y
+      // recto, ambos brazos rectos hacia el cielo. El roll (rotation.z)
+      // sigue el lado REAL hacia el que vuela (this._diveSide), no un
+      // signo fijo — antes la animación siempre se veía hacia la
+      // izquierda sin importar hacia qué lado se tirara el arquero.
+      this.body.rotation.x = 0;
+      this.body.rotation.z = -0.6 * this._diveSide;
+      poseLimb(this.legL, 0);
+      poseLimb(this.legR, 0);
+      poseLimb(this.armL, -2.6);
+      poseLimb(this.armR, -2.6);
+      return;
+    }
+
+    if (s === ANIM.LOW_DIVE) {
+      // Vuelo bajo del arquero: mismo vuelo lateral que el clavado, pero
+      // pegado al piso (cuerpo casi horizontal) en vez de saltar.
+      this.body.rotation.x = 1.3;
+      this.body.rotation.z = -0.4 * this._diveSide;
+      this.body.position.y = -0.25;
+      poseLimb(this.legL, 0);
+      poseLimb(this.legR, 0);
+      poseLimb(this.armL, -2.6);
+      poseLimb(this.armR, -2.6);
+      return;
+    }
+
+    if (s === ANIM.CATCH) {
+      // Arquero con el balón atajado en las manos: cuerpo recto, brazos
+      // extendidos al frente (pose "zombie").
+      poseLimb(this.legL, 0);
+      poseLimb(this.legR, 0);
+      poseLimb(this.armL, -1.57);
+      poseLimb(this.armR, -1.57);
       return;
     }
 

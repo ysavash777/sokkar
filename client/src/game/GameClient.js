@@ -47,10 +47,13 @@ export class GameClient {
       knockedUntil: 0, // víctima de una falta: cayendo por el empujón
       knockDirX: 0,
       knockDirZ: 0,
-      extendQueued: false, // un clic llegó mientras la metida de pie anterior seguía en curso
       diving: false, // arquero: clavado lateral en el aire
       diveDirX: 0,
       diveDirZ: 0,
+      lowDiveUntil: 0, // arquero: vuelo bajo (lateral, pegado al piso)
+      lowDiveDirX: 0,
+      lowDiveDirZ: 0,
+      holding: false, // arquero: balón atajado en las manos
     };
     this.ballOwnerId = null;
     this.sendAccumulator = 0;
@@ -155,6 +158,13 @@ export class GameClient {
       this.ballOwnerId = data.id;
     });
 
+    net.on('caught', (data) => {
+      if (data.id === this.myId) {
+        this.local.holding = true;
+        this.hud.message('¡Atajada!');
+      }
+    });
+
     net.on('kicked', (data) => {
       if (data.id === this.ballOwnerId) this.ballOwnerId = null;
       const ch = this.characters.get(data.id);
@@ -193,8 +203,13 @@ export class GameClient {
     const now = performance.now();
     const stunned = now < L.stunnedUntil;
     const sliding = now < L.slideUntil;
+    const lowDiving = now < L.lowDiveUntil; // arquero: vuelo bajo lateral
     const grounded = now < L.groundUntil; // infractor de barrida, tendido
     const knocked = now < L.knockedUntil; // víctima de falta, cayendo
+
+    // Si ya no tiene la posesión (pateó, se la robaron, etc.) deja de
+    // sostenerla en las manos.
+    if (L.holding && this.ballOwnerId !== this.myId) L.holding = false;
 
     // Cámara 360 (no rota al personaje).
     const md = this.input.consumeMouseDelta();
@@ -205,9 +220,12 @@ export class GameClient {
     const controllingBall = this.ballOwnerId === this.myId;
 
     // ---- acciones
-    if (!stunned && !sliding && !knocked) {
+    if (!stunned && !sliding && !knocked && !lowDiving) {
       // Arquero: clavado lateral a media altura mientras está en el aire
       // y se mueve claramente al costado (reusa el botón de cruzar pie).
+      // Si ya está volando y el balón libre está cerca, ese mismo botón
+      // ataja con las manos en vez de iniciar otro clavado (lo resuelve
+      // el servidor según posición/área — ver GameRoom.onChallenge).
       let diveTriggered = false;
       if (this.myPosition === 'GK' && !L.onGround && !L.diving) {
         const axis = this.input.moveAxis;
@@ -228,45 +246,48 @@ export class GameClient {
         this.kickCharge = Math.min(1, this.kickCharge + (dt * 1000) / ACTIONS.KICK_CHARGE_TIME_MS);
       }
       if (this.input.consume('kickRelease')) {
-        // Se envía la carga cruda (0..1) y la posición actual: el servidor
-        // aplica la curva por tramos y hace salir el balón desde ADELANTE
-        // del jugador en su último punto (sin lag de snapshot).
-        this.net.sendKick(this.cameraCtrl.yaw, this.kickCharge, L.pos);
+        // Se envía la carga cruda (0..1), la posición actual y el pitch de
+        // la cámara: el servidor aplica la curva por tramos, hace salir el
+        // balón desde ADELANTE del jugador en su último punto (sin lag de
+        // snapshot), y ajusta la altura según hacia dónde se mira (mirar
+        // al cielo = remate más alto, mirar al piso = remate rasante).
+        this.net.sendKick(this.cameraCtrl.yaw, this.kickCharge, L.pos, this.cameraCtrl.pitch);
         L.anim = ANIM.KICK;
         L.actionUntil = now + 350;
         // Orientar la patada hacia la cámara.
         L.yaw = this.cameraCtrl.yaw;
         this.kickCharge = 0;
       }
-      // Cruzar pie: SIN cooldown — spameable o cronometrado al llegar la
-      // pelota. La animación es sutil y dura poco; si llega un clic nuevo
-      // mientras la anterior sigue en curso, se guarda uno para reproducir
-      // apenas termine (en vez de superponerse o perderse).
+      // Cruzar pie: SIN cooldown ni animación — spameable o cronometrado
+      // al llegar la pelota. El servidor decide si controla con el pie o
+      // (arquero volando dentro de su área, con el balón cerca) ataja con
+      // las manos.
       if (!diveTriggered && !controllingBall && this.input.consume('extend')) {
         this.net.sendChallenge('extend');
-        if (now >= L.actionUntil || L.anim !== ANIM.EXTEND) {
-          L.anim = ANIM.EXTEND;
-          L.actionUntil = now + ACTIONS.EXTEND_DURATION_MS;
-        } else {
-          L.extendQueued = true;
-        }
       }
       if (!controllingBall && this.input.consume('slide') && now > L.slideCdUntil && L.onGround) {
-        this.net.sendChallenge('slide');
-        L.slideUntil = now + ACTIONS.SLIDE_DURATION_MS;
-        L.slideCdUntil = now + ACTIONS.SLIDE_COOLDOWN_MS;
-        L.slideDir = L.yaw;
+        const axis = this.input.moveAxis;
+        // Arquero moviéndose al costado (A/D, sin W) + barrida = vuelo
+        // bajo en vez de barrida normal — la barrida sigue siendo en
+        // línea recta o presionando W.
+        if (this.myPosition === 'GK' && Math.abs(axis.x) > 0.3 && Math.abs(axis.z) < 0.4) {
+          const camYaw = this.cameraCtrl.yaw;
+          const side = Math.sign(axis.x);
+          this.net.sendChallenge('lowdive', { side });
+          L.lowDiveUntil = now + ACTIONS.LOW_DIVE_DURATION_MS;
+          L.lowDiveDirX = -side * Math.cos(camYaw);
+          L.lowDiveDirZ = side * Math.sin(camYaw);
+          L.slideCdUntil = now + ACTIONS.LOW_DIVE_COOLDOWN_MS;
+        } else {
+          this.net.sendChallenge('slide');
+          L.slideUntil = now + ACTIONS.SLIDE_DURATION_MS;
+          L.slideCdUntil = now + ACTIONS.SLIDE_COOLDOWN_MS;
+          L.slideDir = L.yaw;
+        }
       }
       if (this.input.consume('jump') && L.onGround) {
         L.velY = PLAYER.JUMP_SPEED;
         L.onGround = false;
-      }
-
-      // Reproducir la metida de pie encolada apenas termina la anterior.
-      if (L.extendQueued && now >= L.actionUntil) {
-        L.extendQueued = false;
-        L.anim = ANIM.EXTEND;
-        L.actionUntil = now + ACTIONS.EXTEND_DURATION_MS;
       }
     } else {
       // Descartar acciones encoladas mientras está bloqueado.
@@ -275,11 +296,10 @@ export class GameClient {
       this.input.consume('slide');
       this.input.consume('jump');
       this.kickCharge = 0;
-      L.extendQueued = false;
     }
 
     // Línea de puntería + barra de poder mientras se carga el remate.
-    const charging = this.input.kickHeld && !stunned && !sliding && !knocked && !L.diving;
+    const charging = this.input.kickHeld && !stunned && !sliding && !knocked && !L.diving && !lowDiving && !L.holding;
     this.aimLine.visible = charging;
     if (charging) {
       const len = 3.5 + this.kickCharge * 8.5;
@@ -309,13 +329,20 @@ export class GameClient {
       L.curSpeed = PLAYER.DIVE_SIDE_SPEED;
       moveX = L.diveDirX;
       moveZ = L.diveDirZ;
+    } else if (lowDiving) {
+      // Vuelo bajo del arquero: igual que el clavado pero sin salto,
+      // deriva lateral constante pegado al piso.
+      L.curSpeed = ACTIONS.LOW_DIVE_SPEED;
+      moveX = L.lowDiveDirX;
+      moveZ = L.lowDiveDirZ;
     } else if (sliding) {
-      // La barrida es un lunge sin control de dirección (velocidad propia,
-      // sin pasar por la aceleración de trote/sprint).
-      const t = (L.slideUntil - now) / ACTIONS.SLIDE_DURATION_MS;
-      L.curSpeed = ACTIONS.SLIDE_SPEED * t;
+      // La barrida es un lunge sin control de dirección: arranca con la
+      // velocidad real que traía el jugador (parado/trote/sprint) y frena
+      // sola por deceleración natural — parado apenas se desliza, y
+      // corriendo recorre más distancia cuanto más rápido venía.
       moveX = Math.sin(L.slideDir);
       moveZ = Math.cos(L.slideDir);
+      L.curSpeed = Math.max(0, L.curSpeed - ACTIONS.SLIDE_DECEL * dt);
     } else if (!stunned) {
       const axis = this.input.moveAxis;
       axisPresent = axis.x !== 0 || axis.z !== 0;
@@ -419,15 +446,17 @@ export class GameClient {
     // calcularlo antes dejaba la pose recién iniciada (kick/extend) un
     // frame pisada por IDLE/JOG.
     const inAction = now < L.actionUntil;
-    // Prioridad: cayendo por el golpe > clavado de arquero > tendido tras
-    // cometer la falta > aturdido de pie > barrida > acción en curso >
-    // salto > movimiento.
+    // Prioridad: cayendo por el golpe > balón atajado en las manos >
+    // clavado de arquero > vuelo bajo > tendido tras cometer la falta >
+    // aturdido de pie > barrida > acción en curso > salto > movimiento.
     if (knocked) L.anim = ANIM.KNOCKED;
+    else if (L.holding) L.anim = ANIM.CATCH;
     else if (L.diving) L.anim = ANIM.DIVE;
+    else if (lowDiving) L.anim = ANIM.LOW_DIVE;
     else if (grounded) L.anim = ANIM.SLIDE; // tendido, misma pose que la barrida
     else if (stunned) L.anim = ANIM.STUNNED;
     else if (sliding) L.anim = ANIM.SLIDE;
-    else if (inAction && (L.anim === ANIM.KICK || L.anim === ANIM.EXTEND)) {
+    else if (inAction && L.anim === ANIM.KICK) {
       /* mantener pose de acción */
     } else if (!L.onGround) L.anim = ANIM.JUMP;
     else if (speed > 0) L.anim = L.sprinting ? ANIM.SPRINT : ANIM.JOG;
@@ -476,16 +505,28 @@ export class GameClient {
 
     if (this.ballOwnerId === this.myId) {
       // Predicción local del control: el balón se "pega" a los pies y se
-      // separa más al trotar y aún más al sprintar (control realista).
+      // separa más al trotar y aún más al sprintar (control realista) —
+      // salvo que el arquero lo tenga atajado en las manos, ahí queda fijo
+      // cerca del pecho en vez de seguir el ritmo de los pies.
       const L = this.local;
-      const dist = L.anim === ANIM.SPRINT ? DRIBBLE.DIST_SPRINT : L.anim === ANIM.JOG ? DRIBBLE.DIST_JOG : DRIBBLE.DIST_IDLE;
-      const tx = L.pos.x + Math.sin(L.yaw) * dist;
-      const tz = L.pos.z + Math.cos(L.yaw) * dist;
-      const k = 1 - Math.exp(-DRIBBLE.FOLLOW_RATE * dt);
       const bp = this.ball.mesh.position;
+      const k = 1 - Math.exp(-DRIBBLE.FOLLOW_RATE * dt);
+      let tx;
+      let tz;
+      let ty;
+      if (L.holding) {
+        tx = L.pos.x + Math.sin(L.yaw) * 0.35;
+        tz = L.pos.z + Math.cos(L.yaw) * 0.35;
+        ty = L.pos.y + 1.15;
+      } else {
+        const dist = L.anim === ANIM.SPRINT ? DRIBBLE.DIST_SPRINT : L.anim === ANIM.JOG ? DRIBBLE.DIST_JOG : DRIBBLE.DIST_IDLE;
+        tx = L.pos.x + Math.sin(L.yaw) * dist;
+        tz = L.pos.z + Math.cos(L.yaw) * dist;
+        ty = BALL.RADIUS;
+      }
       bp.x += (tx - bp.x) * k;
       bp.z += (tz - bp.z) * k;
-      bp.y += (BALL.RADIUS - bp.y) * k;
+      bp.y += (ty - bp.y) * k;
 
       // Misma colisión con paredes/red que el servidor: el balón conducido
       // no atraviesa bandas ni fondos (visualmente tampoco).

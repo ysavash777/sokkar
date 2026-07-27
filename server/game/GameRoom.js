@@ -6,11 +6,13 @@
  * Los jugadores son client-authoritative en su movimiento (con clamps),
  * el servidor retransmite snapshots a 20 Hz.
  */
-import { FIELD, BALL, DRIBBLE, ACTIONS, NET, ANIM, PLAYER } from '../../shared/constants.js';
+import { FIELD, CAMERA, BALL, DRIBBLE, ACTIONS, NET, ANIM, PLAYER } from '../../shared/constants.js';
 import {
   stepBall,
   collideBallWithArms,
+  collideBallWithPlayer,
   collideBallWithSlidingBody,
+  collideBallWithLowDiveBody,
   collideBallWithAirborneBody,
   checkGoalCrossing,
   clampToPitch,
@@ -33,7 +35,7 @@ export class GameRoom {
   constructor(io) {
     this.io = io;
     this.players = new Map(); // socketId -> player
-    this.ball = { pos: { x: 0, y: BALL.RADIUS, z: 0 }, vel: { x: 0, y: 0, z: 0 }, ownerId: null };
+    this.ball = { pos: { x: 0, y: BALL.RADIUS, z: 0 }, vel: { x: 0, y: 0, z: 0 }, ownerId: null, caught: false };
     this.score = [0, 0];
     this.kickoffFreezeUntil = 0;
 
@@ -210,37 +212,83 @@ export class GameRoom {
       const t = (charge - ACTIONS.KICK_PIVOT_CHARGE) / (1 - ACTIONS.KICK_PIVOT_CHARGE);
       speed = ACTIONS.KICK_PIVOT_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_PIVOT_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
     }
-    // Elevación: aparece apenas se sale del toque mínimo.
+    // Elevación: aparece apenas se sale del toque mínimo, y además depende
+    // de hacia dónde mira verticalmente la cámara al patear — mirando al
+    // piso el remate sale rasante, mirando al cielo sale más alto.
     const liftT = Math.max(0, (charge - 0.1) / 0.9);
+    const pitch = Number.isFinite(data?.pitch)
+      ? Math.max(CAMERA.PITCH_MIN, Math.min(CAMERA.PITCH_MAX, data.pitch))
+      : 0.35;
+    const pitchNorm = 1 - (pitch - CAMERA.PITCH_MIN) / (CAMERA.PITCH_MAX - CAMERA.PITCH_MIN); // 0 piso, 1 cielo
+    const liftMult =
+      ACTIONS.KICK_LIFT_PITCH_MIN_MULT +
+      (ACTIONS.KICK_LIFT_PITCH_MAX_MULT - ACTIONS.KICK_LIFT_PITCH_MIN_MULT) * pitchNorm;
     p.lastKickAt = now;
     ball.ownerId = null;
+    ball.caught = false;
     ball.vel.x = Math.sin(dirYaw) * speed;
     ball.vel.z = Math.cos(dirYaw) * speed;
-    ball.vel.y = ACTIONS.KICK_LIFT * Math.pow(liftT, 1.5);
+    ball.vel.y = ACTIONS.KICK_LIFT * Math.pow(liftT, 1.5) * liftMult;
     this.io.emit('kicked', { id });
   }
 
-  /** Cruzar pie (extend) o barrida (slide). El robo/falta se evalúa en el tick. */
+  /** Cruzar pie (extend), barrida (slide) o vuelo bajo (lowdive, solo GK). El robo/falta se evalúa en el tick. */
   onChallenge(id, data) {
     const p = this.players.get(id);
     if (!p) return;
     const now = Date.now();
-    const type = data?.type === 'slide' ? 'slide' : 'extend';
+    const type = data?.type === 'slide' ? 'slide' : data?.type === 'lowdive' ? 'lowdive' : 'extend';
     if (now < p.stunnedUntil) return;
-    // Ninguna de las dos tiene sentido con el balón ya en tus propios pies.
+    // Ninguna de las tres tiene sentido con el balón ya en tus propios pies.
     if (this.ball.ownerId === id) return;
 
-    if (type === 'slide') {
-      if (now < p.challengeCooldownUntil || p.challenge) return;
-      p.challenge = { type, until: now + ACTIONS.SLIDE_DURATION_MS, resolved: false };
-      p.challengeCooldownUntil = now + ACTIONS.SLIDE_COOLDOWN_MS;
+    if (type === 'slide' || type === 'lowdive') {
+      if ((type === 'lowdive' && p.position !== 'GK') || now < p.challengeCooldownUntil || p.challenge) return;
+      const duration = type === 'lowdive' ? ACTIONS.LOW_DIVE_DURATION_MS : ACTIONS.SLIDE_DURATION_MS;
+      const cooldown = type === 'lowdive' ? ACTIONS.LOW_DIVE_COOLDOWN_MS : ACTIONS.SLIDE_COOLDOWN_MS;
+      p.challenge = { type, until: now + duration, resolved: false, side: Number(data?.side) >= 0 ? 1 : -1 };
+      p.challengeCooldownUntil = now + cooldown;
+      return;
+    }
+
+    // Arquero: si viene volando (clavado en el aire) dentro de SU área de
+    // meta y el balón está a distancia de control, atajarlo con las manos
+    // en vez de controlarlo con los pies. Fuera del área (o sin estar
+    // volando), es un cruzar-pie normal, como cualquier jugador.
+    if (p.position === 'GK' && p.anim === ANIM.DIVE && this.canCatch(p)) {
+      const prevOwner = this.players.get(this.ball.ownerId);
+      if (prevOwner) prevOwner.captureLockUntil = now + 1000;
+      this.ball.ownerId = p.id;
+      this.ball.caught = true;
+      this.ball.capturedAt = now;
+      this.io.emit('possession', { id: p.id });
+      this.io.emit('caught', { id: p.id });
       return;
     }
 
     // Cruzar pie: SIN cooldown — se puede spamear o cronometrar el toque.
     // Un nuevo clic reinicia la ventana activa.
-    if (p.challenge?.type === 'slide') return; // no mezclar con una barrida en curso
+    if (p.challenge?.type === 'slide' || p.challenge?.type === 'lowdive') return; // no mezclar con un lunge en curso
     p.challenge = { type: 'extend', until: now + ACTIONS.EXTEND_DURATION_MS, resolved: false };
+  }
+
+  /** ¿`p.pos` cae dentro del área de meta que defiende su propio equipo? */
+  isInOwnPenaltyArea(p) {
+    if (Math.abs(p.pos.z) > FIELD.PENALTY_WIDTH / 2) return false;
+    return p.team === 0 ? p.pos.x < -HALF_L + FIELD.PENALTY_DEPTH : p.pos.x > HALF_L - FIELD.PENALTY_DEPTH;
+  }
+
+  /** ¿Puede el arquero `p` atajar el balón LIBRE con las manos ahora mismo? */
+  canCatch(p) {
+    if (this.ball.ownerId) return false; // solo se ataja un balón libre (en vuelo)
+    if (!this.isInOwnPenaltyArea(p)) return false;
+    const dx = this.ball.pos.x - p.pos.x;
+    const dz = this.ball.pos.z - p.pos.z;
+    const dy = this.ball.pos.y - p.pos.y;
+    return (
+      dx * dx + dz * dz < ACTIONS.CONTROL_AREA_RADIUS * ACTIONS.CONTROL_AREA_RADIUS &&
+      Math.abs(dy) < ACTIONS.CONTROL_AREA_HEIGHT
+    );
   }
 
   /**
@@ -250,13 +298,15 @@ export class GameRoom {
    * sistema de faltas (resolveChallenge), no un empujón genérico.
    */
   resolvePlayerCollisions(now) {
+    const isLunging = (p) =>
+      (p.challenge?.type === 'slide' || p.challenge?.type === 'lowdive') && now < p.challenge.until;
     const list = [...this.players.values()];
     for (let i = 0; i < list.length; i++) {
       const a = list[i];
-      if (a.pos.y > 0.5 || (a.challenge?.type === 'slide' && now < a.challenge.until)) continue;
+      if (a.pos.y > 0.5 || isLunging(a)) continue;
       for (let j = i + 1; j < list.length; j++) {
         const b = list[j];
-        if (b.pos.y > 0.5 || (b.challenge?.type === 'slide' && now < b.challenge.until)) continue;
+        if (b.pos.y > 0.5 || isLunging(b)) continue;
         if (resolvePlayerCollision(a, b, PLAYER.RADIUS)) {
           clampPlayerToPitch(a);
           clampPlayerToPitch(b);
@@ -313,12 +363,19 @@ export class GameRoom {
       // Sin colisión de cuerpo ni captura automática: el balón libre pasa
       // de largo (como entre las piernas) salvo que un jugador presione
       // cruzar pie / barrida (ver resolve*Challenge) para recibirlo a
-      // propósito. Dos EXCEPCIONES, siempre automáticas (sin clic):
+      // propósito. EXCEPCIONES, siempre automáticas (sin clic):
       //  - un cuerpo BARRIÉNDOSE es sólido (rebota de frente/costado/arriba).
+      //  - un cuerpo en VUELO BAJO (arquero) es sólido hacia el costado.
       //  - un cuerpo EN EL AIRE (salto, clavado de arquero) también lo es.
+      //  - el ARQUERO de pie también es sólido (colisión automática de
+      //    cuerpo, sin necesidad de cruzar pie) — solo bloquea/rebota, no
+      //    controla; atajar con las manos requiere presionar cruzar pie
+      //    dentro del área de meta (ver onChallenge -> canCatch).
       for (const p of this.players.values()) {
         if (p.challenge?.type === 'slide') collideBallWithSlidingBody(ball, p);
+        else if (p.challenge?.type === 'lowdive') collideBallWithLowDiveBody(ball, p, p.challenge.side || 1);
         else if (p.pos.y > PLAYER.AIRBORNE_COLLISION_MIN_Y) collideBallWithAirborneBody(ball, p);
+        else if (p.position === 'GK') collideBallWithPlayer(ball, p);
       }
     }
   }
@@ -337,6 +394,7 @@ export class GameRoom {
       p.stunnedUntil = now + ACTIONS.FOUL_STUN_MS;
       p.challenge = null;
       if (this.ball.ownerId === p.id) this.ball.ownerId = null;
+      this.ball.caught = false;
 
       let nearest = null;
       let bestDistSq = Infinity;
@@ -352,6 +410,7 @@ export class GameRoom {
       }
       if (nearest) {
         this.ball.ownerId = nearest.id;
+        this.ball.caught = false;
         this.ball.capturedAt = now;
         this.io.emit('possession', { id: nearest.id });
       }
@@ -364,20 +423,33 @@ export class GameRoom {
     }
   }
 
-  /** El balón sigue el punto de control frente a los pies del dueño. Devuelve 0 | 1 | -1 (gol). */
+  /** El balón sigue el punto de control frente a los pies del dueño (o las manos, si lo atajó). Devuelve 0 | 1 | -1 (gol). */
   dribble(dt, now) {
     const owner = this.players.get(this.ball.ownerId);
     if (!owner || now < owner.stunnedUntil) {
       this.ball.ownerId = null;
+      this.ball.caught = false;
       return 0;
     }
-    const dist = !owner.moving
-      ? DRIBBLE.DIST_IDLE
-      : owner.sprinting
-        ? DRIBBLE.DIST_SPRINT
-        : DRIBBLE.DIST_JOG;
-    const tx = owner.pos.x + Math.sin(owner.yaw) * dist;
-    const tz = owner.pos.z + Math.cos(owner.yaw) * dist;
+    const ball = this.ball;
+    let tx;
+    let tz;
+    let ty;
+    if (ball.caught) {
+      // Arquero con el balón atajado: fijo cerca del pecho, no a los pies.
+      tx = owner.pos.x + Math.sin(owner.yaw) * 0.35;
+      tz = owner.pos.z + Math.cos(owner.yaw) * 0.35;
+      ty = owner.pos.y + 1.15;
+    } else {
+      const dist = !owner.moving
+        ? DRIBBLE.DIST_IDLE
+        : owner.sprinting
+          ? DRIBBLE.DIST_SPRINT
+          : DRIBBLE.DIST_JOG;
+      tx = owner.pos.x + Math.sin(owner.yaw) * dist;
+      tz = owner.pos.z + Math.cos(owner.yaw) * dist;
+      ty = BALL.RADIUS;
+    }
 
     // Primer toque suave: el seguimiento arranca lento tras capturar
     // para que el balón no se "teletransporte" al pie.
@@ -385,16 +457,17 @@ export class GameRoom {
     const ramp = Math.min(1, age / DRIBBLE.CAPTURE_RAMP_S);
     const rate = 4 + (DRIBBLE.FOLLOW_RATE - 4) * ramp;
     const k = 1 - Math.exp(-rate * dt);
-    const ball = this.ball;
     ball.pos.x += (tx - ball.pos.x) * k;
     ball.pos.z += (tz - ball.pos.z) * k;
-    ball.pos.y += (BALL.RADIUS - ball.pos.y) * k;
+    ball.pos.y += (ty - ball.pos.y) * k;
     ball.vel.x = ball.vel.z = ball.vel.y = 0;
 
-    // Si el dueño saltó o quedó lejos (lag/teleport), suelta el balón.
+    // Si el dueño saltó o quedó lejos (lag/teleport), suelta el balón —
+    // salvo que lo tenga atajado en las manos: recién aterrizando de un
+    // clavado sigue "en el aire" un instante y no debe soltarlo por eso.
     const dx = ball.pos.x - owner.pos.x;
     const dz = ball.pos.z - owner.pos.z;
-    if (dx * dx + dz * dz > 6.25 || owner.pos.y > 0.6) {
+    if (!ball.caught && (dx * dx + dz * dz > 6.25 || owner.pos.y > 0.6)) {
       this.ball.ownerId = null;
       return 0;
     }
@@ -446,6 +519,7 @@ export class GameRoom {
     const prevOwner = this.players.get(ball.ownerId);
     if (prevOwner) prevOwner.captureLockUntil = now + 1000;
     ball.ownerId = winner.id;
+    ball.caught = false;
     ball.capturedAt = now;
     this.io.emit('possession', { id: winner.id });
     this.io.emit('steal', { by: winner.id, from: prevOwner ? prevOwner.id : null, type: 'extend' });
@@ -543,6 +617,7 @@ export class GameRoom {
       if (prevOwner) prevOwner.captureLockUntil = now + 1000;
       // La barrida solo quita la posesión: balón suelto, empujón corto.
       ball.ownerId = null;
+      ball.caught = false;
       ball.vel.x = Math.sin(p.yaw) * 3.5;
       ball.vel.z = Math.cos(p.yaw) * 3.5;
       ball.vel.y = 0.8;
@@ -563,6 +638,7 @@ export class GameRoom {
     // Si la víctima tenía el balón, lo conserva; si era libre, se lo queda.
     if (!this.ball.ownerId || this.ball.ownerId === p.id) {
       this.ball.ownerId = rival.id;
+      this.ball.caught = false;
       this.ball.capturedAt = now;
       this.io.emit('possession', { id: rival.id });
     }
@@ -597,6 +673,7 @@ export class GameRoom {
   onGoal(scoringTeam) {
     this.score[scoringTeam]++;
     this.ball.ownerId = null;
+    this.ball.caught = false;
     this.ball.pos = { x: 0, y: BALL.RADIUS, z: 0 };
     this.ball.vel = { x: 0, y: 0, z: 0 };
     this.kickoffFreezeUntil = Date.now() + 2500;

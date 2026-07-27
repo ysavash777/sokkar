@@ -19,7 +19,7 @@ export class NetworkClient {
       if (this.snapshots.length > 30) this.snapshots.shift();
     });
 
-    for (const ev of ['joined', 'joinError', 'playerJoined', 'playerLeft', 'goal', 'foul', 'steal', 'kicked', 'possession']) {
+    for (const ev of ['joined', 'joinError', 'playerJoined', 'playerLeft', 'goal', 'foul', 'steal', 'kicked', 'possession', 'caught']) {
       this.socket.on(ev, (data) => this.handlers[ev]?.(data));
     }
   }
@@ -43,17 +43,18 @@ export class NetworkClient {
     ]);
   }
 
-  /** pos: posición actual del jugador — el balón sale desde su frente. */
-  sendKick(yaw, power, pos) {
+  /** pos: posición actual del jugador — el balón sale desde su frente. pitch: cámara (altura del remate). */
+  sendKick(yaw, power, pos, pitch) {
     this.socket.emit('kick', {
       yaw,
       power,
       pos: pos ? [+pos.x.toFixed(2), +pos.z.toFixed(2)] : undefined,
+      pitch: Number.isFinite(pitch) ? +pitch.toFixed(3) : undefined,
     });
   }
 
-  sendChallenge(type) {
-    this.socket.emit('challenge', { type });
+  sendChallenge(type, extra) {
+    this.socket.emit('challenge', { type, ...extra });
   }
 
   /**

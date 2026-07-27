@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CAMERA } from '/shared/constants.js';
 
 /**
  * Cámara orbital 360° en tercera persona.
@@ -20,7 +21,7 @@ export class CameraController {
 
   applyMouseDelta(dx, dy) {
     this.yaw -= dx * this.sensitivity;
-    this.pitch = Math.max(-0.15, Math.min(1.2, this.pitch + dy * this.sensitivity));
+    this.pitch = Math.max(CAMERA.PITCH_MIN, Math.min(CAMERA.PITCH_MAX, this.pitch + dy * this.sensitivity));
   }
 
   update(targetPos, dt) {
