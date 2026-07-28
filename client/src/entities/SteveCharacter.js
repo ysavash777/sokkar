@@ -84,6 +84,17 @@ const _xAxis = new THREE.Vector3(1, 0, 0);
 const _qDelta = new THREE.Quaternion();
 const _groundBox = new THREE.Box3();
 
+// Barrida: con la rotación exacta del archivo de referencia, las piernas
+// (huesos "Right/Left Leg", ramas separadas del rig, sin hueso padre común
+// con el torso) quedan visualmente sueltas del torso — medido en vivo con
+// la distancia real punto-a-punto más cercana entre las mallas (no cajas
+// englobantes, que pueden solaparse sin que las superficies se toquen):
+// haría falta acercar cada pierna hacia el centro (eje lateral X) y un
+// poco hacia abajo/atrás para que sus puntos más próximos al torso lo
+// toquen. Es simétrico entre ambas piernas. Se aplica moviendo el
+// CONTENEDOR (no hueso) de cada pierna, nunca los huesos del archivo.
+const SLIDE_LEG_OFFSET = { x: 0.119, y: -0.012, z: -0.029 };
+
 /** Aplica una rotación adicional sobre el eje X local, sobre la pose base del pivote. */
 function poseLimb(node, angleX) {
   if (!node) return;
@@ -168,6 +179,15 @@ export class SteveCharacter {
       n.userData.basePos = n.position.clone();
     }
 
+    // Contenedores (NO huesos) que envuelven cada pierna — ver SLIDE_LEG_OFFSET
+    // más abajo: la barrida necesita acercar las piernas al torso sin tocar
+    // ningún hueso, así que se reposiciona el contenedor entero de cada
+    // pierna (grupo plano, sin relación con el rig/animación).
+    this.legRRoot = this.legR ? this.legR.parent : null;
+    this.legLRoot = this.legL ? this.legL.parent : null;
+    if (this.legRRoot) this.legRRoot.userData.basePos = this.legRRoot.position.clone();
+    if (this.legLRoot) this.legLRoot.userData.basePos = this.legLRoot.position.clone();
+
     const label = this.position === 'GK' ? `${this.nickname} (GK)` : this.nickname;
     this.nameSprite = this.makeNameSprite(label, this.team);
     this.group.add(this.nameSprite);
@@ -228,6 +248,10 @@ export class SteveCharacter {
     poseLimbQuat(this.waist, 0, 0, 0, 1);
     poseLimbQuat(this.torso, 0, 0, 0, 1);
     poseLimbQuat(this.head, 0, 0, 0, 1);
+    // Reset del contenedor de piernas (ver SLIDE_LEG_OFFSET) — solo la
+    // barrida lo desplaza, cualquier otra pose vuelve a su offset original.
+    if (this.legRRoot) this.legRRoot.position.copy(this.legRRoot.userData.basePos);
+    if (this.legLRoot) this.legLRoot.position.copy(this.legLRoot.userData.basePos);
 
     // Lado real del vuelo del arquero (clavado / vuelo bajo), derivado del
     // movimiento real (no de un signo fijo) — así la animación siempre
@@ -280,6 +304,22 @@ export class SteveCharacter {
       poseLimbQuat(this.armR, 0.9681476403781077, 0, 0, 0.2503800040544415);
       poseLimbQuat(this.legR, 0.6479818536760913, -0.11806258944288661, 0.10263024323494335, 0.7454178529214829);
       poseLimbQuat(this.legL, -0.6773301813533629, -0.06256443319110287, -0.0851471690585514, 0.7280518365670201);
+      // Acercar cada pierna al torso (ver SLIDE_LEG_OFFSET) — offset FIJO,
+      // no un hueso: mueve el contenedor plano que envuelve cada pierna.
+      if (this.legRRoot) {
+        this.legRRoot.position.set(
+          this.legRRoot.userData.basePos.x - SLIDE_LEG_OFFSET.x,
+          this.legRRoot.userData.basePos.y + SLIDE_LEG_OFFSET.y,
+          this.legRRoot.userData.basePos.z + SLIDE_LEG_OFFSET.z,
+        );
+      }
+      if (this.legLRoot) {
+        this.legLRoot.position.set(
+          this.legLRoot.userData.basePos.x + SLIDE_LEG_OFFSET.x,
+          this.legLRoot.userData.basePos.y + SLIDE_LEG_OFFSET.y,
+          this.legLRoot.userData.basePos.z + SLIDE_LEG_OFFSET.z,
+        );
+      }
       groundSensitive = true;
     } else if (s === ANIM.KICK) {
       // Patada rápida con la derecha (~0.3 s de swing).
