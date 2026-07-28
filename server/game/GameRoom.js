@@ -767,6 +767,7 @@ export class GameRoom {
       t: Date.now(),
       b: [+this.ball.pos.x.toFixed(2), +this.ball.pos.y.toFixed(2), +this.ball.pos.z.toFixed(2)],
       o: this.ball.ownerId,
+      c: this.ball.caught, // atajada en las manos del arquero: no debe "rodar" (ver Ball.updateRoll)
       p: players,
     });
   }

@@ -704,7 +704,11 @@ export class GameClient {
         a.b[2] + (b.b[2] - a.b[2]) * alpha,
       );
     }
-    this.ball.updateRoll(dt);
+    // Atajada en las manos (propia o de otro arquero, ver snap.c del
+    // servidor): el balón queda quieto en vez de "rodar" solo por
+    // acompañar la posición del jugador que la sostiene.
+    const held = this.ballOwnerId === this.myId ? this.local.holding : !!(pair && pair.b.c);
+    this.ball.updateRoll(dt, !held);
   }
 }
 
