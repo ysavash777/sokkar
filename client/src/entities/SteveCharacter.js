@@ -83,6 +83,9 @@ function loadSkinTexture(skinName) {
 const _xAxis = new THREE.Vector3(1, 0, 0);
 const _qDelta = new THREE.Quaternion();
 const _groundBox = new THREE.Box3();
+const _torsoBox = new THREE.Box3();
+const _legRBox = new THREE.Box3();
+const _legLBox = new THREE.Box3();
 
 /** Aplica una rotación adicional sobre el eje X local, sobre la pose base del pivote. */
 function poseLimb(node, angleX) {
@@ -168,6 +171,29 @@ export class SteveCharacter {
       n.userData.basePos = n.position.clone();
     }
 
+    // Contenedores (NO huesos) que envuelven cada pierna con su offset de
+    // pivote — ver _closeSlideGap(): la barrida necesita separar visualmente
+    // el torso de las piernas SIN tocar ningún hueso, así que en vez de eso
+    // se reposiciona el contenedor entero de cada pierna (grupo plano, sin
+    // relación con el rig/animación), exactamente como el "ajuste por
+    // posición del controlador" que exige la barrida.
+    this.legRRoot = this.legR ? this.legR.parent : null;
+    this.legLRoot = this.legL ? this.legL.parent : null;
+    if (this.legRRoot) this.legRRoot.userData.basePos = this.legRRoot.position.clone();
+    if (this.legLRoot) this.legLRoot.userData.basePos = this.legLRoot.position.clone();
+
+    // Meshes posados (no huesos) usados solo para medir el hueco
+    // torso/piernas con un bounding box preciso (ver _closeSlideGap()).
+    this.torsoMesh = null;
+    this.legRMesh = null;
+    this.legLMesh = null;
+    this.body.traverse((o) => {
+      if (!o.isSkinnedMesh) return;
+      if (o.name === 'Waist') this.torsoMesh = o;
+      else if (o.name === 'Right_Leg') this.legRMesh = o;
+      else if (o.name === 'Left_Leg') this.legLMesh = o;
+    });
+
     const label = this.position === 'GK' ? `${this.nickname} (GK)` : this.nickname;
     this.nameSprite = this.makeNameSprite(label, this.team);
     this.group.add(this.nameSprite);
@@ -228,6 +254,10 @@ export class SteveCharacter {
     poseLimbQuat(this.waist, 0, 0, 0, 1);
     poseLimbQuat(this.torso, 0, 0, 0, 1);
     poseLimbQuat(this.head, 0, 0, 0, 1);
+    // Reset del contenedor de piernas (ver _closeSlideGap) — solo la
+    // barrida lo desplaza, cualquier otra pose vuelve a su offset original.
+    if (this.legRRoot) this.legRRoot.position.copy(this.legRRoot.userData.basePos);
+    if (this.legLRoot) this.legLRoot.position.copy(this.legLRoot.userData.basePos);
 
     // Lado real del vuelo del arquero (clavado / vuelo bajo), derivado del
     // movimiento real (no de un signo fijo) — así la animación siempre
@@ -280,6 +310,7 @@ export class SteveCharacter {
       poseLimbQuat(this.armR, 0.9681476403781077, 0, 0, 0.2503800040544415);
       poseLimbQuat(this.legR, 0.6479818536760913, -0.11806258944288661, 0.10263024323494335, 0.7454178529214829);
       poseLimbQuat(this.legL, -0.6773301813533629, -0.06256443319110287, -0.0851471690585514, 0.7280518365670201);
+      this._closeSlideGap();
       groundSensitive = true;
     } else if (s === ANIM.KICK) {
       // Patada rápida con la derecha (~0.3 s de swing).
@@ -356,6 +387,35 @@ export class SteveCharacter {
     }
 
     if (groundSensitive) this._clampToGround();
+  }
+
+  /**
+   * Barrida: el torso (hueso "Body", pivote propio) y las piernas (huesos
+   * "Right/Left Leg", pivote propio e independiente) son ramas SEPARADAS
+   * del rig (no hay un hueso padre común) — al aplicar la rotación exacta
+   * del archivo de referencia, el torso se inclina fuerte hacia atrás y
+   * deja un hueco real con las piernas (medido en vivo: ~0.12 unidades
+   * entre el borde inferior del torso y el superior de las piernas).
+   * Sin tocar NINGÚN hueso (el cuaternión posado queda intacto, tal cual
+   * el archivo), se cierra ese hueco recalculando la distancia real cada
+   * frame con bounding boxes precisos y reposicionando el CONTENEDOR (no
+   * hueso) que envuelve cada pierna — el mismo tipo de ajuste "por
+   * posición del controlador" que ya usa _clampToGround() para el piso.
+   */
+  _closeSlideGap() {
+    if (!this.torsoMesh || !this.legRMesh || !this.legLMesh || !this.legRRoot || !this.legLRoot) return;
+    this.group.updateMatrixWorld(true);
+    _torsoBox.setFromObject(this.torsoMesh, true);
+    _legRBox.setFromObject(this.legRMesh, true);
+    _legLBox.setFromObject(this.legLMesh, true);
+    const legsMaxY = Math.max(_legRBox.max.y, _legLBox.max.y);
+    const gapWorld = _torsoBox.min.y - legsMaxY;
+    if (gapWorld <= 0) return; // ya se tocan o se superponen, nada que cerrar
+    const scaleY = this.body.scale.y || 1;
+    const localOffset = gapWorld / scaleY;
+    this.legRRoot.position.y = this.legRRoot.userData.basePos.y + localOffset;
+    this.legLRoot.position.y = this.legLRoot.userData.basePos.y + localOffset;
+    this.group.updateMatrixWorld(true);
   }
 
   /**

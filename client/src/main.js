@@ -71,13 +71,11 @@ const positionSelect = document.getElementById('position-select');
 // client/assets/skins/, nombre de archivo = nombre de la skin). Se usa
 // tanto para la pantalla de ingreso como para el panel de personalización
 // en partida (loadout-skin) — misma lista, sin pedirla dos veces.
-const SKIN_STORAGE_KEY = 'sokkaio.skin';
 const loadoutSkinSelect = document.getElementById('loadout-skin');
 fetch('/api/skins')
   .then((r) => r.json())
   .then((skins) => {
     if (!Array.isArray(skins) || skins.length === 0) return;
-    const remembered = localStorage.getItem(SKIN_STORAGE_KEY);
     for (const select of [skinSelect, loadoutSkinSelect]) {
       select.innerHTML = '';
       for (const name of skins) {
@@ -86,7 +84,6 @@ fetch('/api/skins')
         opt.textContent = name;
         select.appendChild(opt);
       }
-      if (remembered && skins.includes(remembered)) select.value = remembered;
     }
   })
   .catch(() => {
@@ -100,7 +97,6 @@ joinForm.addEventListener('submit', (e) => {
   if (!nickname) return;
   joinError.textContent = '';
   const skin = skinSelect.value || undefined;
-  if (skin) localStorage.setItem(SKIN_STORAGE_KEY, skin);
   lastJoinedSkin = skin;
   net.join(nickname, skin, positionSelect.value);
 });
@@ -149,12 +145,10 @@ document.getElementById('loadout-close-btn').addEventListener('click', () => {
 document.getElementById('loadout-apply-btn').addEventListener('click', () => {
   const skin = loadoutSkinSelect.value || undefined;
   const position = loadoutPositionSelect.value;
-  if (skin) localStorage.setItem(SKIN_STORAGE_KEY, skin);
   net.changeLoadout(skin, position);
   if (mobileControls) {
     mobileControls.prefs.sensFree = +loadoutSensFree.value;
     mobileControls.prefs.sensAim = +loadoutSensAim.value;
-    mobileControls._save('sokkaio.touchControls.prefs', mobileControls.prefs);
   }
   loadoutPanel.classList.add('hidden');
 });

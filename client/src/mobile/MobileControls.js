@@ -5,9 +5,6 @@
  * InputManager que usa el teclado/mouse (ver setTouchAxis/trigger/etc.),
  * así que GameClient no distingue el origen del input.
  */
-const STORAGE_LAYOUT_KEY = 'sokkaio.touchControls.layout';
-const STORAGE_PREFS_KEY = 'sokkaio.touchControls.prefs';
-
 // Posiciones por defecto: centro de cada control, en % del viewport.
 const DEFAULT_LAYOUT = {
   joystick: { xPct: 16, yPct: 78 },
@@ -44,8 +41,10 @@ export class MobileControls {
     this.input = input;
     this.canvas = canvas;
     this.editMode = false;
-    this.layout = this._load(STORAGE_LAYOUT_KEY, DEFAULT_LAYOUT);
-    this.prefs = this._load(STORAGE_PREFS_KEY, DEFAULT_PREFS);
+    // Sin persistencia entre sesiones (no se guarda nada en localStorage):
+    // layout y sensibilidad siempre arrancan en sus valores por defecto.
+    this.layout = { ...DEFAULT_LAYOUT };
+    this.prefs = { ...DEFAULT_PREFS };
     this.buttons = {};
 
     this.root = document.createElement('div');
@@ -63,23 +62,6 @@ export class MobileControls {
   }
 
   // ---------------------------------------------------------------- layout
-
-  _load(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? { ...fallback, ...JSON.parse(raw) } : { ...fallback };
-    } catch {
-      return { ...fallback };
-    }
-  }
-
-  _save(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      /* localStorage no disponible (modo privado, etc.) — se pierde entre sesiones */
-    }
-  }
 
   _positionControl(el, key) {
     const pos = this.layout[key] || DEFAULT_LAYOUT[key];
@@ -126,7 +108,6 @@ export class MobileControls {
       for (const t of e.changedTouches) {
         if (t.identifier === touchId) touchId = null;
       }
-      this._save(STORAGE_LAYOUT_KEY, this.layout);
     };
     el.addEventListener('touchend', end);
     el.addEventListener('touchcancel', end);
@@ -193,27 +174,22 @@ export class MobileControls {
     scaleInput.addEventListener('input', () => {
       this.prefs.scale = +scaleInput.value;
       this._applyPrefs();
-      this._save(STORAGE_PREFS_KEY, this.prefs);
     });
     opacityInput.addEventListener('input', () => {
       this.prefs.opacity = +opacityInput.value;
       this._applyPrefs();
-      this._save(STORAGE_PREFS_KEY, this.prefs);
     });
     sensFreeInput.addEventListener('input', () => {
       this.prefs.sensFree = +sensFreeInput.value;
-      this._save(STORAGE_PREFS_KEY, this.prefs);
     });
     sensAimInput.addEventListener('input', () => {
       this.prefs.sensAim = +sensAimInput.value;
-      this._save(STORAGE_PREFS_KEY, this.prefs);
     });
 
     panel.querySelector('#touch-reset-btn').addEventListener('click', () => {
       this.layout = { ...DEFAULT_LAYOUT };
       this._positionControl(this.joystickEl, 'joystick');
       for (const id of Object.keys(this.buttons)) this._positionControl(this.buttons[id], id);
-      this._save(STORAGE_LAYOUT_KEY, this.layout);
     });
     panel.querySelector('#touch-done-btn').addEventListener('click', () => this._setEditMode(false));
   }

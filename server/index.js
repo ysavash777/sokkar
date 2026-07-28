@@ -32,10 +32,11 @@ const io = new Server(server, {
   serveClient: true,
 });
 
-// Cache de estáticos solo en producción (en dev rompe la iteración).
-const staticMaxAge = process.env.NODE_ENV === 'production' ? '1h' : 0;
-app.use(express.static(path.join(rootDir, 'client'), { maxAge: staticMaxAge, index: 'index.html' }));
-app.use('/shared', express.static(path.join(rootDir, 'shared'), { maxAge: staticMaxAge }));
+// Sin caché de estáticos (ni en producción): siempre se sirve el archivo
+// tal cual está en disco, así un deploy nuevo se ve al instante sin tener
+// que abrir en incógnito o limpiar caché a mano.
+app.use(express.static(path.join(rootDir, 'client'), { maxAge: 0, etag: false, lastModified: false, index: 'index.html', setHeaders: (res) => res.setHeader('Cache-Control', 'no-store') }));
+app.use('/shared', express.static(path.join(rootDir, 'shared'), { maxAge: 0, etag: false, lastModified: false, setHeaders: (res) => res.setHeader('Cache-Control', 'no-store') }));
 app.get('/healthz', (_req, res) => res.send('ok'));
 app.get('/api/skins', (_req, res) => res.json(listSkins()));
 

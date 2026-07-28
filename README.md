@@ -113,8 +113,9 @@ soporte touch) el juego reemplaza teclado/mouse por controles en pantalla:
   al mouse).
 - Botón de **pantalla completa** (⛶, arriba a la derecha).
 - Botón de **configurar** (⚙): entra en modo edición para arrastrar cada
-  control a otra posición y ajustar tamaño/opacidad con dos sliders. Todo se
-  guarda en el dispositivo (`localStorage`) y persiste entre partidas.
+  control a otra posición y ajustar tamaño/opacidad con dos sliders. Nada se
+  guarda entre sesiones (el juego no usa `localStorage`) — cada partida
+  arranca con los valores por defecto.
 
 ## Correr en local
 

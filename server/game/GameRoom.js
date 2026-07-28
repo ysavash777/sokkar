@@ -316,21 +316,6 @@ export class GameRoom {
   }
 
   /**
-   * Control NATURAL con el pie: cualquier jugador de pie cuyo cuerpo toca
-   * el balón libre lo controla automáticamente, sin necesidad de cruzar
-   * pie — cruzar pie queda como herramienta para robar/proteger/ajustar
-   * con precisión, no como requisito para el contacto en sí.
-   */
-  captureBall(p, now) {
-    const prevOwner = this.players.get(this.ball.ownerId);
-    if (prevOwner) prevOwner.captureLockUntil = now + 1000;
-    this.ball.ownerId = p.id;
-    this.ball.caught = false;
-    this.ball.capturedAt = now;
-    this.io.emit('possession', { id: p.id });
-  }
-
-  /**
    * Asistencia de atajada (arquero): esfera de detección más generosa que
    * la colisión de cápsulas real (diámetro ≈ su altura, centrada a media
    * altura del jugador), para que una clavada bien sincronizada tenga más
@@ -415,10 +400,11 @@ export class GameRoom {
         this.onGoal(goal === 1 ? 0 : 1);
         return;
       }
-      // TODOS los jugadores tienen colisión automática con el balón libre
-      // — cruzar pie queda como herramienta de precisión (robar/proteger),
-      // no como requisito para que exista contacto. EXCEPCIONES con su
-      // propia física (no control automático "cómodo", son impactos):
+      // El balón libre NUNCA atraviesa un cuerpo — todos los jugadores lo
+      // rebotan al contacto (colideBallWithPlayer/etc., solo física) — pero
+      // eso NO otorga posesión por sí solo: controlar el balón requiere
+      // cruzar pie (ver checkExtendEligibility/resolveExtends), salvo las
+      // excepciones propias del arquero y del lunge:
       //  - un cuerpo BARRIÉNDOSE es sólido (rebota de frente/costado/arriba).
       //    Si en el camino toca el balón PRIMERO, esa barrida queda
       //    "limpia" el resto del lunge — un contacto con el rival después
@@ -448,8 +434,7 @@ export class GameRoom {
             this.catchBall(p, now);
           }
         } else {
-          const hit = collideBallWithPlayer(ball, p);
-          if (hit) this.captureBall(p, now);
+          collideBallWithPlayer(ball, p); // solo rebote físico, no otorga posesión
         }
       }
     }
