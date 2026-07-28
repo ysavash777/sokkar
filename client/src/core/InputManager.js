@@ -6,6 +6,10 @@
  * así que el resto del juego (GameClient) no distingue de dónde vino
  * cada input.
  */
+// Tope por evento individual de movementX/Y — ver el listener de
+// 'mousemove' más abajo.
+const MAX_MOUSE_DELTA_PER_EVENT = 250;
+
 export class InputManager {
   constructor(canvas) {
     this.canvas = canvas;
@@ -33,7 +37,7 @@ export class InputManager {
     canvas.addEventListener('mousedown', (e) => {
       e.preventDefault();
       if (document.pointerLockElement !== canvas) {
-        canvas.requestPointerLock();
+        this._lockPointer();
         return;
       }
       if (e.button === 0) this.kickHeld = true;
@@ -54,13 +58,37 @@ export class InputManager {
 
     document.addEventListener('mousemove', (e) => {
       if (document.pointerLockElement !== this.canvas) return;
-      this.mouseDX += e.movementX;
-      this.mouseDY += e.movementY;
+      // Guarda defensiva: un solo evento con un delta absurdo (glitch de
+      // driver/navegador, p.ej. al recién adquirir el pointer lock) no debe
+      // traducirse en un salto brusco de cámara — un giro rápido normal
+      // nunca llega a este límite por evento individual (el polling del
+      // mouse entrega muchos eventos por frame, cada uno con un delta
+      // razonable), así que esto no frena giros rápidos genuinos.
+      const dx = Math.max(-MAX_MOUSE_DELTA_PER_EVENT, Math.min(MAX_MOUSE_DELTA_PER_EVENT, e.movementX));
+      const dy = Math.max(-MAX_MOUSE_DELTA_PER_EVENT, Math.min(MAX_MOUSE_DELTA_PER_EVENT, e.movementY));
+      this.mouseDX += dx;
+      this.mouseDY += dy;
     });
   }
 
+  /**
+   * Pide el movimiento CRUDO del dispositivo (unadjustedMovement), sin la
+   * curva de aceleración de puntero del sistema operativo — esa curva es
+   * no lineal y se nota más cuanto más rápido se mueve el mouse, lo que se
+   * sentía como que la cámara "se pierde y se reajusta" al girar rápido en
+   * 360. No todos los navegadores la soportan: si el navegador la soporta
+   * pero la rechaza (o directamente no expone la Promise, API vieja), cae
+   * de nuevo al pointer lock normal sin romper nada.
+   */
+  _lockPointer() {
+    const result = this.canvas.requestPointerLock?.({ unadjustedMovement: true });
+    if (result && typeof result.catch === 'function') {
+      result.catch(() => this.canvas.requestPointerLock?.());
+    }
+  }
+
   lock() {
-    this.canvas.requestPointerLock?.();
+    this._lockPointer();
   }
 
   /** Devuelve y resetea el delta de mouse acumulado del frame. */
