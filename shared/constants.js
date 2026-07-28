@@ -76,10 +76,11 @@ export const PLAYER = {
   // de la colisión automática con el balón (salto, clavado, etc.).
   AIRBORNE_COLLISION_MIN_Y: 0.15,
   // Asistencia de atajada (arquero): esfera de detección más generosa que
-  // la colisión de cápsulas real, centrada en el jugador — diámetro ≈ su
-  // altura total. Solo cuenta mientras está en pleno clavado (alto o
-  // bajo) dentro de su propia área de meta (ver GameRoom.checkDiveCatch).
-  DIVE_CATCH_SPHERE_RADIUS: 0.9, // = HEIGHT / 2
+  // la colisión de cápsulas real, centrada en el jugador — un poco más
+  // grande que su altura total (no exagerada). Solo cuenta mientras está
+  // en pleno clavado (alto o bajo) dentro de su propia área de meta (ver
+  // GameRoom.checkDiveCatch).
+  DIVE_CATCH_SPHERE_RADIUS: 1.05,
 };
 
 export const DRIBBLE = {
