@@ -64,6 +64,11 @@ export class GameClient {
       justKicked: false, // flanco: fuerza el reinicio de la animación de patada aunque siga en ANIM.KICK
     };
     this.ballOwnerId = null;
+    // Último momento en que un evento INSTANTÁNEO (possession/kicked) puso
+    // this.ballOwnerId — ver updateBall(): el snapshot interpolado llega
+    // ~INTERP_DELAY_MS más tarde, así que no debe pisar un cambio de dueño
+    // recién confirmado con su propio valor todavía viejo.
+    this.ballOwnerSetAt = 0;
     this.sendAccumulator = 0;
     this.kickCharge = 0;
     this.sound = new SoundManager();
@@ -192,6 +197,7 @@ export class GameClient {
 
     net.on('possession', (data) => {
       this.ballOwnerId = data.id;
+      this.ballOwnerSetAt = performance.now();
     });
 
     net.on('caught', (data) => {
@@ -202,7 +208,10 @@ export class GameClient {
     });
 
     net.on('kicked', (data) => {
-      if (data.id === this.ballOwnerId) this.ballOwnerId = null;
+      if (data.id === this.ballOwnerId) {
+        this.ballOwnerId = null;
+        this.ballOwnerSetAt = performance.now();
+      }
       const ch = this.characters.get(data.id);
       if (ch && data.id !== this.myId) ch.setAnim(ANIM.KICK);
       this.sound.playShot();
@@ -642,7 +651,16 @@ export class GameClient {
 
   updateBall(dt) {
     const pair = this.net.getInterpolationPair();
-    if (pair) this.ballOwnerId = pair.b.o;
+    // El snapshot interpolado representa el estado de ~INTERP_DELAY_MS en
+    // el pasado (para que el resto de la interpolación sea suave) — si un
+    // evento instantáneo (possession/kicked, ver bindNetEvents) acaba de
+    // cambiar this.ballOwnerId, ese valor retrasado todavía muestra el
+    // dueño VIEJO durante ese margen. Pisarlo igual reseteaba local.holding
+    // casi al instante de atajar (rompía la atajada: la pelota volvía a
+    // los pies) — se espera a que el snapshot alcance el evento reciente.
+    if (pair && performance.now() - this.ballOwnerSetAt > NET.INTERP_DELAY_MS) {
+      this.ballOwnerId = pair.b.o;
+    }
 
     if (this.ballOwnerId === this.myId) {
       // Predicción local del control: el balón se "pega" a los pies y se

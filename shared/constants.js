@@ -80,7 +80,7 @@ export const PLAYER = {
   // grande que su altura total (no exagerada). Solo cuenta mientras está
   // en pleno clavado (alto o bajo) dentro de su propia área de meta (ver
   // GameRoom.checkDiveCatch).
-  DIVE_CATCH_SPHERE_RADIUS: 1.05,
+  DIVE_CATCH_SPHERE_RADIUS: 1.2,
 };
 
 export const DRIBBLE = {
