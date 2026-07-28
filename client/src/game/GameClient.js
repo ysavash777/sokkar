@@ -107,6 +107,7 @@ export class GameClient {
       );
       this.debugCatchSphere.visible = false;
       this.scene.add(this.debugCatchSphere);
+      this._debugSphereBox = new THREE.Box3();
     }
 
     this.bindNetEvents();
@@ -526,21 +527,6 @@ export class GameClient {
     this.controlRing.visible = true;
     this.controlRing.position.set(L.pos.x, 0.02, L.pos.z);
 
-    // Esfera de depuración de la asistencia de atajada (solo ?debug=1):
-    // solo tiene sentido mostrarla cuando REALMENTE puede intervenir —
-    // vuelo bajo o clavado alto (ver GameRoom.tick, checkDiveCatchSphere
-    // solo se llama ahí) — nunca en una barrida normal ni parado/trotando.
-    // Antes se mostraba siempre que fueras arquero: en una barrida común
-    // el cuerpo queda tendido casi horizontal y se salía visualmente de
-    // la esfera (que sigue centrada a media altura, pose de pie), dando
-    // la falsa impresión de estar desalineada — en realidad esa acción ni
-    // siquiera usa la esfera.
-    if (this.debugCatchSphere) {
-      const showSphere = this.myPosition === 'GK' && (lowDiving || L.diving);
-      this.debugCatchSphere.visible = showSphere;
-      if (showSphere) this.debugCatchSphere.position.set(L.pos.x, L.pos.y + PLAYER.HEIGHT / 2, L.pos.z);
-    }
-
     // Aplicar al mesh propio.
     const ch = this.characters.get(this.myId);
     if (ch) {
@@ -556,6 +542,23 @@ export class GameClient {
         ch.setAnim(L.anim);
       }
       ch.update(dt, speed);
+    }
+
+    // Esfera de depuración de la asistencia de atajada (solo ?debug=1):
+    // SIEMPRE centrada en el arquero, en cualquier acción. Se calcula DESPUÉS
+    // de ch.update() (pose del frame ya aplicada) y se centra en el bounding
+    // box real y preciso del cuerpo (huesos posados, no un offset fijo tipo
+    // "pos.y + HEIGHT/2") — antes ese offset asumía una pose de pie, así que
+    // en un clavado o vuelo bajo (cuerpo inclinado en diagonal) el personaje
+    // se veía "salir" de la esfera aunque la posición base fuera correcta.
+    if (this.debugCatchSphere) {
+      const showSphere = this.myPosition === 'GK';
+      this.debugCatchSphere.visible = showSphere;
+      if (showSphere && ch?.ready) {
+        ch.group.updateMatrixWorld(true);
+        this._debugSphereBox.setFromObject(ch.body, true);
+        this._debugSphereBox.getCenter(this.debugCatchSphere.position);
+      }
     }
   }
 
