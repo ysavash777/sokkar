@@ -263,26 +263,19 @@ export class SteveCharacter {
       poseLimb(this.armR, -1.1);
       groundSensitive = true;
     } else if (s === ANIM.SLIDE) {
-      // Barrida: pose EXACTA del archivo de referencia provisto, sin
-      // tocar absolutamente ningún hueso — cuaterniones absolutos tal
-      // cual los exportó Blockbench (la pose base de este rig es la
-      // identidad en todos los huesos, así que el cuaternión exportado
-      // ES la rotación local a aplicar, sin componer con nada). El grupo
-      // contenedor (this.body) queda sin rotación extra: el jugador
-      // termina prácticamente acostado sobre el piso porque ASÍ es la
-      // pose real, no por un ajuste nuestro — el único ajuste permitido
-      // es la posición del ROOT (this.body.position), nunca un hueso: ver
-      // _centerSlideOnRoot() más abajo (nivel del piso + centrado en el
-      // círculo de control).
-      this.body.rotation.x = 0;
+      // Barrida: SIN posar ningún miembro por separado — se usa el rig
+      // BASE (de pie, brazos/piernas en su ángulo de reposo) y solo se
+      // acuesta el cuerpo ENTERO rotándolo como una sola pieza rígida. Al
+      // no tocar ni un hueso individual no hay forma de que algo quede
+      // "desconectado" (la causa de todos los intentos anteriores con la
+      // pose del archivo de referencia). Waist/torso/cabeza ya quedaron en
+      // 0,0,0,1 por el reset de arriba.
       this.body.rotation.z = 0;
-      poseLimbQuat(this.waist, 0, 0, 0, 1);
-      poseLimbQuat(this.torso, 0.5187732581605214, 0, 0, 0.8549118706729466);
-      poseLimbQuat(this.head, 0.04797812852134394, 0, 0, 0.9988483864849507);
-      poseLimbQuat(this.armL, -0.6018150231520483, 0, 0, 0.7986355100472928);
-      poseLimbQuat(this.armR, 0.9681476403781077, 0, 0, 0.2503800040544415);
-      poseLimbQuat(this.legR, 0.6479818536760913, -0.11806258944288661, 0.10263024323494335, 0.7454178529214829);
-      poseLimbQuat(this.legL, -0.6773301813533629, -0.06256443319110287, -0.0851471690585514, 0.7280518365670201);
+      this.body.rotation.x = Math.PI / 2;
+      poseLimb(this.legL, 0);
+      poseLimb(this.legR, 0);
+      poseLimb(this.armL, 0);
+      poseLimb(this.armR, 0);
       this._centerSlideOnRoot();
     } else if (s === ANIM.KICK) {
       // Patada rápida con la derecha (~0.3 s de swing).
