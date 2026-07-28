@@ -202,6 +202,17 @@ export class SteveCharacter {
     }
   }
 
+  /**
+   * Fuerza el reinicio del swing de patada aunque ya esté en ANIM.KICK
+   * (patadas consecutivas rápidas) — setAnim() solo reacciona a un cambio
+   * de estado, así que una segunda patada mientras la primera sigue en
+   * curso no reiniciaría el timer sin este método.
+   */
+  playKick() {
+    this.animState = ANIM.KICK;
+    this.actionTimer = 0;
+  }
+
   /** Animación procedural: ciclo de caminata + poses de acción. */
   update(dt, horizontalSpeed) {
     if (!this.ready) return;
@@ -251,21 +262,24 @@ export class SteveCharacter {
       poseLimb(this.armR, -1.1);
       groundSensitive = true;
     } else if (s === ANIM.SLIDE) {
-      // Barrida: pose exacta provista (barrida.gltf) — cuaterniones
-      // absolutos exportados de Blockbench, tal cual (la pose base de
-      // este rig es la identidad en todos los huesos). El grupo
-      // contenedor (this.body) queda sin rotación extra: el reclinado
-      // real lo da la rotación propia del torso ("Body"/"Waist"), no un
-      // hack sobre el grupo entero.
+      // Barrida: pose EXACTA del archivo de referencia provisto, sin
+      // tocar absolutamente ningún hueso — cuaterniones absolutos tal
+      // cual los exportó Blockbench (la pose base de este rig es la
+      // identidad en todos los huesos, así que el cuaternión exportado
+      // ES la rotación local a aplicar, sin componer con nada). El grupo
+      // contenedor (this.body) queda sin rotación extra: el jugador
+      // termina prácticamente acostado sobre el piso porque ASÍ es la
+      // pose real, no por un ajuste nuestro — el único ajuste permitido
+      // es la posición del root, vía _clampToGround() más abajo.
       this.body.rotation.x = 0;
       this.body.rotation.z = 0;
-      poseLimbQuat(this.waist, 0, 0, -0.043619387365336, 0.9990482215818578);
-      poseLimbQuat(this.torso, -0.9320078692827984, 0, 0, 0.3624380382837017);
+      poseLimbQuat(this.waist, 0, 0, 0, 1);
+      poseLimbQuat(this.torso, 0.5187732581605214, 0, 0, 0.8549118706729466);
       poseLimbQuat(this.head, 0.04797812852134394, 0, 0, 0.9988483864849507);
-      poseLimbQuat(this.armL, 0.3090169943749474, 0, 0, 0.9510565162951535);
-      poseLimbQuat(this.armR, 0.848048096156426, 0, 0, 0.5299192642332049);
-      poseLimbQuat(this.legR, 0.5855164753608278, -0.10111450938374256, 0.05700799393724121, 0.8023069248737478);
-      poseLimbQuat(this.legL, -0.5847752095318209, 0.16648725236777703, 0.10663245425069755, 0.7867334166136049);
+      poseLimbQuat(this.armL, -0.6018150231520483, 0, 0, 0.7986355100472928);
+      poseLimbQuat(this.armR, 0.9681476403781077, 0, 0, 0.2503800040544415);
+      poseLimbQuat(this.legR, 0.6479818536760913, -0.11806258944288661, 0.10263024323494335, 0.7454178529214829);
+      poseLimbQuat(this.legL, -0.6773301813533629, -0.06256443319110287, -0.0851471690585514, 0.7280518365670201);
       groundSensitive = true;
     } else if (s === ANIM.KICK) {
       // Patada rápida con la derecha (~0.3 s de swing).

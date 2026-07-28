@@ -53,11 +53,15 @@ export class GameClient {
       diving: false, // arquero: clavado lateral en el aire
       diveDirX: 0,
       diveDirZ: 0,
-      diveGroundUntil: 0, // arquero: tendido de costado tras aterrizar, antes de levantarse
+      diveGroundUntil: 0, // arquero: tendido de costado tras cualquier clavada (alta o baja), antes de levantarse
       lowDiveUntil: 0, // arquero: vuelo bajo (lateral, pegado al piso)
       lowDiveDirX: 0,
       lowDiveDirZ: 0,
+      wasLowDiving: false, // detecta el instante en que termina el vuelo bajo, para arrancar la recuperación
       holding: false, // arquero: balón atajado en las manos
+      velX: 0, // velocidad real (con dirección) del frame anterior — para heredarla al patear
+      velZ: 0,
+      justKicked: false, // flanco: fuerza el reinicio de la animación de patada aunque siga en ANIM.KICK
     };
     this.ballOwnerId = null;
     this.sendAccumulator = 0;
@@ -91,6 +95,20 @@ export class GameClient {
     this.controlRing.visible = false;
     this.scene.add(this.controlRing);
 
+    // Depuración de la asistencia de atajada (arquero): esfera roja
+    // translúcida que muestra PLAYER.DIVE_CATCH_SPHERE_RADIUS — SOLO para
+    // programar/ajustar (ver GameRoom.checkDiveCatchSphere), nunca visible
+    // en el juego normal (gateada por window.SOKKAIO_DEBUG, ?debug=1).
+    if (window.SOKKAIO_DEBUG) {
+      const sphereGeo = new THREE.SphereGeometry(PLAYER.DIVE_CATCH_SPHERE_RADIUS, 16, 12);
+      this.debugCatchSphere = new THREE.Mesh(
+        sphereGeo,
+        new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.25, depthWrite: false }),
+      );
+      this.debugCatchSphere.visible = false;
+      this.scene.add(this.debugCatchSphere);
+    }
+
     this.bindNetEvents();
   }
 
@@ -118,6 +136,17 @@ export class GameClient {
       this.characters.get(id)?.dispose();
       this.characters.delete(id);
       this.nicknames.delete(id);
+    });
+
+    // Cambio de skin/posición en partida: la skin y la posición quedan
+    // "horneadas" en el personaje al construirlo (material/nombre), así
+    // que se recrea con los datos nuevos en vez de intentar mutarlo.
+    net.on('playerUpdated', (p) => {
+      this.characters.get(p.id)?.dispose();
+      this.characters.delete(p.id);
+      this.addCharacter(p);
+      this.nicknames.set(p.id, p.nickname);
+      if (p.id === this.myId) this.myPosition = p.position;
     });
 
     net.on('goal', (data) => {
@@ -213,7 +242,13 @@ export class GameClient {
     const stunned = now < L.stunnedUntil;
     const sliding = now < L.slideUntil;
     const lowDiving = now < L.lowDiveUntil; // arquero: vuelo bajo lateral
-    const diveGrounded = now < L.diveGroundUntil; // arquero: tendido tras aterrizar del clavado
+    // El vuelo bajo termina (por tiempo, no por soltar el botón — ver
+    // trigger más abajo): arranca la MISMA recuperación tendido-en-el-suelo
+    // que la clavada alta (mismo PLAYER.DIVE_GROUND_MS), en vez de poder
+    // pararse al instante.
+    if (L.wasLowDiving && !lowDiving) L.diveGroundUntil = now + PLAYER.DIVE_GROUND_MS;
+    L.wasLowDiving = lowDiving;
+    const diveGrounded = now < L.diveGroundUntil; // arquero: tendido tras cualquier clavada
     const grounded = now < L.groundUntil; // infractor de barrida, tendido
     const knocked = now < L.knockedUntil; // víctima de falta, cayendo
 
@@ -237,14 +272,17 @@ export class GameClient {
         this.kickCharge = Math.min(1, this.kickCharge + (dt * 1000) / ACTIONS.KICK_CHARGE_TIME_MS);
       }
       if (this.input.consume('kickRelease')) {
-        // Se envía la carga cruda (0..1), la posición actual y el pitch de
-        // la cámara: el servidor aplica la curva por tramos, hace salir el
-        // balón desde ADELANTE del jugador en su último punto (sin lag de
-        // snapshot), y ajusta la altura según hacia dónde se mira (mirar
-        // al cielo = remate más alto, mirar al piso = remate rasante).
-        this.net.sendKick(this.cameraCtrl.yaw, this.kickCharge, L.pos, this.cameraCtrl.pitch);
+        // Se envía la carga cruda (0..1), la posición actual, el pitch de
+        // la cámara y la velocidad real del jugador (Primera Ley de
+        // Newton: el servidor SUMA esta velocidad al impulso del remate,
+        // nunca lo reemplaza — un remate suave en plena carrera conserva
+        // la inercia en vez de sentirse "clavado").
+        this.net.sendKick(this.cameraCtrl.yaw, this.kickCharge, L.pos, this.cameraCtrl.pitch, [L.velX, L.velZ]);
         L.anim = ANIM.KICK;
-        L.actionUntil = now + 350;
+        // Bloqueo de pose bien corto: solo lo justo para que se note el
+        // swing, sin trabar remates consecutivos rápidos.
+        L.actionUntil = now + 120;
+        L.justKicked = true; // fuerza reiniciar la animación aunque siga en ANIM.KICK
         // Orientar la patada hacia la cámara.
         L.yaw = this.cameraCtrl.yaw;
         this.kickCharge = 0;
@@ -334,11 +372,13 @@ export class GameClient {
       // frena con la misma inercia que un aturdido normal.
       L.curSpeed = Math.max(0, L.curSpeed - PLAYER.DECEL * dt);
     } else if (lowDiving) {
-      // Vuelo bajo del arquero: igual que el clavado pero sin salto,
-      // deriva lateral constante pegado al piso.
-      L.curSpeed = ACTIONS.LOW_DIVE_SPEED;
+      // Vuelo bajo del arquero: MISMA lógica que la barrida recta —
+      // arranca con la velocidad real que traía al iniciarlo y frena solo
+      // por deceleración natural, sin prolongarse por mantener el botón
+      // presionado (antes usaba una velocidad constante todo el tiempo).
       moveX = L.lowDiveDirX;
       moveZ = L.lowDiveDirZ;
+      L.curSpeed = Math.max(0, L.curSpeed - ACTIONS.SLIDE_DECEL * dt);
     } else if (sliding) {
       // La barrida es un lunge sin control de dirección: arranca con la
       // velocidad real que traía el jugador (parado/trote/sprint) y frena
@@ -392,6 +432,10 @@ export class GameClient {
       L.curSpeed = Math.max(0, L.curSpeed - PLAYER.DECEL * dt);
     }
     const speed = L.curSpeed;
+    // Velocidad real con dirección (no solo magnitud) — se manda al patear
+    // para que el remate herede la inercia del movimiento (Newton).
+    L.velX = moveX * speed;
+    L.velZ = moveZ * speed;
 
     // Stamina: drena solo al sprintar de verdad. NO recarga mientras Shift
     // siga presionado (aunque ya no se pueda sprintar) — hay que soltarlo.
@@ -482,12 +526,27 @@ export class GameClient {
     this.controlRing.visible = true;
     this.controlRing.position.set(L.pos.x, 0.02, L.pos.z);
 
+    // Esfera de depuración de la asistencia de atajada (solo ?debug=1).
+    if (this.debugCatchSphere) {
+      const showSphere = this.myPosition === 'GK';
+      this.debugCatchSphere.visible = showSphere;
+      if (showSphere) this.debugCatchSphere.position.set(L.pos.x, L.pos.y + PLAYER.HEIGHT / 2, L.pos.z);
+    }
+
     // Aplicar al mesh propio.
     const ch = this.characters.get(this.myId);
     if (ch) {
       ch.group.position.copy(L.pos);
       ch.group.rotation.y = L.yaw;
-      ch.setAnim(L.anim);
+      // Patadas consecutivas rápidas: ANIM.KICK no cambia entre una y
+      // otra, así que setAnim() (que solo reacciona a un cambio de
+      // estado) no reiniciaría el swing — playKick() lo fuerza siempre.
+      if (L.justKicked) {
+        ch.playKick();
+        L.justKicked = false;
+      } else {
+        ch.setAnim(L.anim);
+      }
       ch.update(dt, speed);
     }
   }
@@ -514,11 +573,16 @@ export class GameClient {
       const t = (this.kickCharge - ACTIONS.KICK_PIVOT_CHARGE) / (1 - ACTIONS.KICK_PIVOT_CHARGE);
       speed = ACTIONS.KICK_PIVOT_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_PIVOT_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
     }
-    const liftY = ACTIONS.KICK_LIFT_BASE + pitchNorm * ACTIONS.KICK_LIFT_PITCH_MAX;
-    const liftFraction = liftY / (ACTIONS.KICK_LIFT_BASE + ACTIONS.KICK_LIFT_PITCH_MAX);
+    // Curva progresiva no lineal: raso mirando al piso, sube cada vez más
+    // rápido cuanto más se mira al cielo (misma fórmula que el servidor).
+    const liftY = ACTIONS.KICK_LIFT_PITCH_MAX * Math.pow(pitchNorm, ACTIONS.KICK_LIFT_CURVE);
+    const liftFraction = Math.pow(pitchNorm, ACTIONS.KICK_LIFT_CURVE);
     const horizSpeed = speed * (1 - ACTIONS.KICK_HORIZ_LIFT_PENALTY * liftFraction);
-    const vx = Math.sin(dirYaw) * horizSpeed;
-    const vz = Math.cos(dirYaw) * horizSpeed;
+    // Newton: la inercia del jugador se suma al impulso (misma fórmula que
+    // GameRoom.onKick), para que la línea de puntería anticipe el mismo
+    // resultado que va a aplicar el servidor.
+    const vx = Math.sin(dirYaw) * horizSpeed + L.velX * ACTIONS.KICK_MOMENTUM_CARRY;
+    const vz = Math.cos(dirYaw) * horizSpeed + L.velZ * ACTIONS.KICK_MOMENTUM_CARRY;
 
     let px = L.pos.x + Math.sin(dirYaw) * 0.6;
     let pz = L.pos.z + Math.cos(dirYaw) * 0.6;

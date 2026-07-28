@@ -88,6 +88,19 @@ export class GameRoom {
     console.log(`[sokkaio] ${nickname} entró (equipo ${team}) — ${this.players.size} jugadores`);
   }
 
+  /**
+   * Cambio de skin/posición EN PARTIDA — separado por completo de la
+   * pantalla de nickname (index.js ya validó skin contra la lista real
+   * de archivos y position contra FIELD/GK antes de llamar acá).
+   */
+  onChangeLoadout(id, { skin, position }) {
+    const p = this.players.get(id);
+    if (!p) return;
+    if (skin) p.skin = skin;
+    if (position) p.position = position;
+    this.io.emit('playerUpdated', this.publicPlayer(p));
+  }
+
   removePlayer(id) {
     const p = this.players.get(id);
     if (!p) return;
@@ -213,22 +226,37 @@ export class GameRoom {
       speed = ACTIONS.KICK_PIVOT_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_PIVOT_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
     }
     // Elevación: depende SOLO de hacia dónde mira la cámara (pitch), nunca
-    // de la potencia — pero levantar el balón cuesta algo de velocidad
-    // horizontal (proporcional a cuánto se está levantando), así la altura
-    // queda relacionada con la distancia/velocidad real en vez de sumarse
-    // gratis encima de la potencia completa.
+    // de la potencia. Curva progresiva (pitchNorm^KICK_LIFT_CURVE, no
+    // lineal): totalmente raso mirando al piso, sube apenas en posición
+    // neutral, y cada vez más rápido cuanto más se mira al cielo, sin
+    // saltos — con techo en KICK_LIFT_PITCH_MAX. Levantar el balón cuesta
+    // algo de velocidad horizontal (proporcional a cuánto se levanta), así
+    // la altura queda relacionada con la distancia/velocidad real en vez
+    // de sumarse gratis encima de la potencia completa.
     const pitch = Number.isFinite(data?.pitch)
       ? Math.max(CAMERA.PITCH_MIN, Math.min(CAMERA.PITCH_MAX, data.pitch))
       : 0.35;
     const pitchNorm = 1 - (pitch - CAMERA.PITCH_MIN) / (CAMERA.PITCH_MAX - CAMERA.PITCH_MIN); // 0 piso, 1 cielo
-    const liftY = ACTIONS.KICK_LIFT_BASE + pitchNorm * ACTIONS.KICK_LIFT_PITCH_MAX;
-    const liftFraction = liftY / (ACTIONS.KICK_LIFT_BASE + ACTIONS.KICK_LIFT_PITCH_MAX); // 0..1
+    const liftFraction = Math.pow(pitchNorm, ACTIONS.KICK_LIFT_CURVE); // 0..1, progresivo
+    const liftY = ACTIONS.KICK_LIFT_PITCH_MAX * liftFraction;
     const horizSpeed = speed * (1 - ACTIONS.KICK_HORIZ_LIFT_PENALTY * liftFraction);
+
+    // Primera Ley de Newton: el impulso del remate se SUMA a la velocidad
+    // real del jugador (estimada server-side en onPlayerState) y, si se
+    // está redirigiendo un balón libre que ya venía en movimiento, también
+    // a la velocidad que traía — nunca reemplaza el movimiento existente.
+    // Se usa la velocidad ESTIMADA del servidor (p.vel), no la que manda
+    // el cliente en el payload, para no confiar ciegamente en el cliente.
+    const carryVX = (p.vel?.x ?? 0) * ACTIONS.KICK_MOMENTUM_CARRY;
+    const carryVZ = (p.vel?.z ?? 0) * ACTIONS.KICK_MOMENTUM_CARRY;
+    const priorBallVX = ball.ownerId === id ? 0 : ball.vel.x * ACTIONS.KICK_MOMENTUM_CARRY;
+    const priorBallVZ = ball.ownerId === id ? 0 : ball.vel.z * ACTIONS.KICK_MOMENTUM_CARRY;
+
     p.lastKickAt = now;
     ball.ownerId = null;
     ball.caught = false;
-    ball.vel.x = Math.sin(dirYaw) * horizSpeed;
-    ball.vel.z = Math.cos(dirYaw) * horizSpeed;
+    ball.vel.x = Math.sin(dirYaw) * horizSpeed + carryVX + priorBallVX;
+    ball.vel.z = Math.cos(dirYaw) * horizSpeed + carryVZ + priorBallVZ;
     ball.vel.y = liftY;
     this.io.emit('kicked', { id });
   }
@@ -285,6 +313,37 @@ export class GameRoom {
     this.ball.capturedAt = now;
     this.io.emit('possession', { id: p.id });
     this.io.emit('caught', { id: p.id });
+  }
+
+  /**
+   * Control NATURAL con el pie: cualquier jugador de pie cuyo cuerpo toca
+   * el balón libre lo controla automáticamente, sin necesidad de cruzar
+   * pie — cruzar pie queda como herramienta para robar/proteger/ajustar
+   * con precisión, no como requisito para el contacto en sí.
+   */
+  captureBall(p, now) {
+    const prevOwner = this.players.get(this.ball.ownerId);
+    if (prevOwner) prevOwner.captureLockUntil = now + 1000;
+    this.ball.ownerId = p.id;
+    this.ball.caught = false;
+    this.ball.capturedAt = now;
+    this.io.emit('possession', { id: p.id });
+  }
+
+  /**
+   * Asistencia de atajada (arquero): esfera de detección más generosa que
+   * la colisión de cápsulas real (diámetro ≈ su altura, centrada a media
+   * altura del jugador), para que una clavada bien sincronizada tenga más
+   * probabilidad de terminar en atajada exitosa. Solo cuenta dentro de SU
+   * área de meta — nunca reemplaza la colisión real, la complementa.
+   */
+  checkDiveCatchSphere(p) {
+    if (!this.isInOwnPenaltyArea(p)) return false;
+    const cx = this.ball.pos.x - p.pos.x;
+    const cy = this.ball.pos.y - (p.pos.y + PLAYER.HEIGHT / 2);
+    const cz = this.ball.pos.z - p.pos.z;
+    const r = PLAYER.DIVE_CATCH_SPHERE_RADIUS;
+    return cx * cx + cy * cy + cz * cz < r * r;
   }
 
   /**
@@ -356,36 +415,41 @@ export class GameRoom {
         this.onGoal(goal === 1 ? 0 : 1);
         return;
       }
-      // Sin colisión de cuerpo ni captura automática: el balón libre pasa
-      // de largo (como entre las piernas) salvo que un jugador presione
-      // cruzar pie / barrida (ver resolve*Challenge) para recibirlo a
-      // propósito. EXCEPCIONES, siempre automáticas (sin clic):
+      // TODOS los jugadores tienen colisión automática con el balón libre
+      // — cruzar pie queda como herramienta de precisión (robar/proteger),
+      // no como requisito para que exista contacto. EXCEPCIONES con su
+      // propia física (no control automático "cómodo", son impactos):
       //  - un cuerpo BARRIÉNDOSE es sólido (rebota de frente/costado/arriba).
+      //    Si en el camino toca el balón PRIMERO, esa barrida queda
+      //    "limpia" el resto del lunge — un contacto con el rival después
+      //    de haber tocado el balón no cobra falta (ver resolveSlideChallenge).
       //  - un cuerpo en VUELO BAJO o EN EL AIRE (arquero) es sólido hacia
-      //    el costado/aire — y si lo TOCA CON EL CUERPO (no con el círculo
-      //    de control del piso) dentro de SU área de meta, en vez de
-      //    rebotarlo lo ataja con las manos (catchBall), sin apretar nada.
-      //    No se exige `p.anim === ANIM.DIVE` a propósito: ese byte llega
-      //    recién en el próximo sync de estado (20 Hz) y el contacto puede
-      //    ocurrir antes de que el servidor se entere — alcanza con que
-      //    esté en el aire (clavado o un salto común) dentro del área.
-      //  - el ARQUERO de pie también es sólido (colisión automática de
-      //    cuerpo, sin necesidad de cruzar pie) — pero eso solo bloquea o
-      //    rebota, nunca ataja (atajar requiere estar en pleno vuelo).
+      //    el costado/aire — y si lo TOCA CON EL CUERPO (colisión real, o
+      //    la esfera de asistencia más generosa, checkDiveCatchSphere)
+      //    dentro de SU área de meta, en vez de rebotarlo lo ataja con las
+      //    manos (catchBall), sin apretar nada. No se exige
+      //    `p.anim === ANIM.DIVE`: ese byte llega recién en el próximo
+      //    sync de estado (20 Hz) y el contacto puede ocurrir antes de que
+      //    el servidor se entere — alcanza con estar en el aire dentro del
+      //    área (clavado o un salto común, como un arquero real).
       for (const p of this.players.values()) {
-        if (ball.ownerId) break; // ya lo atajaron este mismo tick
+        if (ball.ownerId) break; // ya lo controlaron/atajaron este mismo tick
         if (p.challenge?.type === 'slide') {
-          collideBallWithSlidingBody(ball, p);
+          const hit = collideBallWithSlidingBody(ball, p);
+          // Tocó el balón primero: barrida limpia — protegida de falta
+          // por cualquier contacto con el rival el resto de este lunge.
+          if (hit && !p.challenge.resolved) p.challenge.resolved = true;
         } else if (p.challenge?.type === 'lowdive') {
           const hit = collideBallWithLowDiveBody(ball, p, p.challenge.side || 1);
-          if (hit && this.isInOwnPenaltyArea(p)) this.catchBall(p, now);
+          if ((hit && this.isInOwnPenaltyArea(p)) || this.checkDiveCatchSphere(p)) this.catchBall(p, now);
         } else if (p.pos.y > PLAYER.AIRBORNE_COLLISION_MIN_Y) {
           const hit = collideBallWithAirborneBody(ball, p);
-          if (hit && p.position === 'GK' && this.isInOwnPenaltyArea(p)) {
+          if (p.position === 'GK' && ((hit && this.isInOwnPenaltyArea(p)) || this.checkDiveCatchSphere(p))) {
             this.catchBall(p, now);
           }
-        } else if (p.position === 'GK') {
-          collideBallWithPlayer(ball, p);
+        } else {
+          const hit = collideBallWithPlayer(ball, p);
+          if (hit) this.captureBall(p, now);
         }
       }
     }

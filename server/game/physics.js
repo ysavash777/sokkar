@@ -415,7 +415,15 @@ export function stepBall(ball, dt) {
   // Suelo: rebote + fricción de rodadura.
   if (ball.pos.y < BALL.RADIUS) {
     ball.pos.y = BALL.RADIUS;
-    if (ball.vel.y < 0) ball.vel.y = -ball.vel.y * BALL.GROUND_RESTITUTION;
+    if (ball.vel.y < 0) {
+      // El césped absorbe energía en el instante del bote: no solo la
+      // vertical (restitución), también un poco de la horizontal — antes
+      // un balón que todavía estaba botando (no rodando) conservaba el
+      // 100% de su velocidad horizontal en cada bote.
+      ball.vel.y = -ball.vel.y * BALL.GROUND_RESTITUTION;
+      ball.vel.x *= BALL.BOUNCE_HORIZ_DAMPING;
+      ball.vel.z *= BALL.BOUNCE_HORIZ_DAMPING;
+    }
     if (Math.abs(ball.vel.y) < 0.8) ball.vel.y = 0;
     const roll = Math.exp(-BALL.ROLL_FRICTION * dt);
     ball.vel.x *= roll;

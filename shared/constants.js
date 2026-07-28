@@ -28,7 +28,8 @@ export const CAMERA = {
 export const BALL = {
   RADIUS: 0.35,
   GRAVITY: 20,
-  GROUND_RESTITUTION: 0.55,
+  GROUND_RESTITUTION: 0.5, // (antes 0.55) el césped absorbe algo más de energía al botar
+  BOUNCE_HORIZ_DAMPING: 0.92, // fricción horizontal en el instante del bote (no solo rodando)
   // Frenado en el piso: subido (antes 0.6) para que no recorra tanto al
   // frenar — mitad arcade, no una desaceleración 100% realista. Combinado
   // con ROLL_STOP_SPEED para que no quede reptando a paso de tortuga
@@ -65,13 +66,20 @@ export const PLAYER = {
   STAMINA_REGEN_IDLE_MULT: 1.6,
   STAMINA_MIN_TO_SPRINT: 10,
   // Arquero: clavado lateral a media altura mientras salta y se mueve al
-  // costado (con clic izquierdo). Solo disponible en posición GK.
+  // costado (con clic derecho, en el aire). Solo disponible en posición GK.
   DIVE_SIDE_SPEED: 6.5,
   DIVE_HEIGHT_MULT: 0.5, // fracción de la altura de salto normal
-  DIVE_GROUND_MS: 350, // al aterrizar, queda tendido de costado antes de levantarse
+  // Recuperación tras CUALQUIER clavada (alta o baja): queda tendido antes
+  // de poder levantarse. Mismo tiempo para ambas, a propósito.
+  DIVE_GROUND_MS: 300,
   // Umbral de altura para considerar a un jugador "en el aire" a efectos
   // de la colisión automática con el balón (salto, clavado, etc.).
   AIRBORNE_COLLISION_MIN_Y: 0.15,
+  // Asistencia de atajada (arquero): esfera de detección más generosa que
+  // la colisión de cápsulas real, centrada en el jugador — diámetro ≈ su
+  // altura total. Solo cuenta mientras está en pleno clavado (alto o
+  // bajo) dentro de su propia área de meta (ver GameRoom.checkDiveCatch).
+  DIVE_CATCH_SPHERE_RADIUS: 0.9, // = HEIGHT / 2
 };
 
 export const DRIBBLE = {
@@ -97,21 +105,25 @@ export const ACTIONS = {
   KICK_RANGE: 1.5,
   KICK_CHARGE_TIME_MS: 900,
   RECAPTURE_DELAY_MS: 450, // quien patea no re-captura su propio pase al instante
+  // Primera Ley de Newton: el remate hereda la velocidad real del jugador
+  // (y la del balón, si ya venía en movimiento libre) — se SUMA al impulso
+  // del propio remate, nunca lo reemplaza. Evita que un remate suave en
+  // plena carrera se sienta "clavado" (como si el jugador estuviera
+  // parado). Fracción parcial, no 1:1, para no desbalancear a los que ya
+  // corren rápido.
+  KICK_MOMENTUM_CARRY: 0.6,
   // Altura del remate: depende SOLO de hacia dónde mira la cámara (pitch),
-  // NUNCA de cuánto se cargó la barra — la potencia no debe determinar la
-  // altura, eso lo dijiste explícitamente. En cambio, levantar el balón
-  // SÍ le cuesta algo de velocidad horizontal (KICK_HORIZ_LIFT_PENALTY):
+  // NUNCA de cuánto se cargó la barra. Curva progresiva (potencia
+  // pitchNorm^KICK_LIFT_CURVE, no lineal): mirando totalmente al piso sale
+  // 100% raso; en posición neutral de cámara sube apenas; cuanto más se
+  // mira al cielo, más rápido crece el ángulo, con techo en
+  // KICK_LIFT_PITCH_MAX — sin saltos bruscos en ningún punto. Levantar el
+  // balón SÍ cuesta algo de velocidad horizontal (KICK_HORIZ_LIFT_PENALTY),
   // así la altura queda relacionada con la distancia/velocidad real, no
-  // sumada gratis encima de la potencia completa — un remate a barra
-  // llena apuntando al cielo llega más lejos que uno a media barra, pero
-  // ambos suben lo MISMO si apuntan igual. Con la curva de potencia actual
-  // (que ya sube rápido), esto hace que "media barra + buena cámara" dé un
-  // centro corto y controlable, y barra llena dé un centro/pelotazo más
-  // largo a la misma altura — sin necesitar cargar al máximo para un buen
-  // centro, ni que un toque mínimo mande la pelota a upa como un cañonazo.
-  KICK_LIFT_BASE: 0.4, // lift residual incluso mirando al piso (nunca 100% pegado)
-  KICK_LIFT_PITCH_MAX: 9.5, // lift máximo por apuntar la cámara al cielo
-  KICK_HORIZ_LIFT_PENALTY: 0.4, // fracción de velocidad horizontal que "cuesta" el lift máximo
+  // sumada gratis encima de la potencia completa.
+  KICK_LIFT_PITCH_MAX: 10.5, // lift máximo por apuntar la cámara al cielo
+  KICK_LIFT_CURVE: 1.6, // exponente de la curva pitch->altura (>1 = progresiva, no lineal)
+  KICK_HORIZ_LIFT_PENALTY: 0.48, // fracción de velocidad horizontal que "cuesta" el lift máximo
 
   // Cruzar pie (clic ruedita): SIN cooldown — se puede spamear o cronometrar.
   // Controla/roba el balón si está dentro del área de control circular
@@ -141,7 +153,9 @@ export const ACTIONS = {
   // falta, es una colisión de cuerpo automática contra el balón libre,
   // igual que la barrida pero hacia el costado; si el balón la toca, el
   // arquero se la queda atajada en las manos (igual que en el clavado alto).
-  LOW_DIVE_SPEED: 7,
+  // Misma lógica de distancia que la barrida recta: arranca con la
+  // velocidad real del arquero al iniciarla y frena sola por deceleración
+  // (SLIDE_DECEL) — no se prolonga por mantener el botón presionado.
   LOW_DIVE_DURATION_MS: 550,
 
   STEAL_RADIUS: 0.62, // el pie debe conectar realmente con la pelota

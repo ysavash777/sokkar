@@ -674,6 +674,124 @@ tiene un `README.md` explicando qué falta) — si no están presentes,
 `SoundManager` falla en silencio (`.catch(() => {})` en cada `.play()`),
 el juego funciona igual, simplemente no suena hasta que se agreguen.
 
+## Ronda de correcciones: físicas, GK, controles y móvil
+
+### Remate: Newton, elevación por cámara (no por potencia), y previsualización
+
+`GameRoom.onKick` ahora suma (nunca reemplaza) la velocidad real del
+jugador (`p.vel`, estimada server-side) y, si se está redirigiendo un
+balón libre ya en movimiento, también su velocidad — `ACTIONS.KICK_MOMENTUM_CARRY`
+(0.6, parcial, no 1:1) controla cuánto pesa esa inercia. Antes el remate
+ignoraba el movimiento previo y se sentía "clavado" al patear suave en
+plena carrera. La altura sigue sin depender de `charge`, pero la curva
+pasó a ser progresiva: `liftY = KICK_LIFT_PITCH_MAX · pitchNorm^KICK_LIFT_CURVE`
+(exponente 1.6) — totalmente raso mirando al piso, sube apenas en
+posición neutral, cada vez más rápido cuanto más se mira al cielo, sin
+saltos. `GameClient.updateAimTrajectory` replica exactamente la misma
+fórmula (incluida la herencia de velocidad) para que la línea de
+puntería anticipe el resultado real, y se actualiza en vivo apenas se
+empieza a cargar el remate — no depende de tener el balón (`charging`
+nunca chequea posesión).
+
+### Pelota: el césped absorbe energía también al botar
+
+`BALL.GROUND_RESTITUTION` bajó a 0.5 y se agregó `BOUNCE_HORIZ_DAMPING`
+(0.92): antes, un balón que todavía estaba botando (no rodando) conservaba
+el 100% de su velocidad horizontal en cada bote — ahora también pierde
+algo, además de la fricción de rodadura ya existente.
+
+### Arquero: vuelo bajo con la misma física que la barrida recta
+
+El vuelo bajo usaba una velocidad constante mientras se mantenía el
+botón — ahora usa exactamente la misma lógica que la barrida recta
+(`ACTIONS.SLIDE_DECEL`): arranca con la velocidad real al iniciarlo y
+frena sola, sin prolongarse por mantener presionado. Al terminar
+(`GameClient.updateLocalPlayer`, detección de flanco `wasLowDiving`),
+arranca la MISMA recuperación tendido-en-el-suelo que el clavado alto
+(`PLAYER.DIVE_GROUND_MS`, ahora 300 ms para ambos — antes el vuelo bajo
+no tenía ninguna).
+
+### Barrida: pose exacta del archivo de referencia, sin tocar el rig
+
+La pose se rehizo con los cuaterniones EXACTOS de un nuevo archivo de
+referencia, sin modificar ningún hueso — el jugador queda mucho más bajo
+(prácticamente acostado) porque esa es la pose real, no un ajuste
+nuestro. `_clampToGround()` (ver más abajo, sección anterior) sigue
+siendo el ÚNICO mecanismo permitido para evitar que atraviese el piso,
+y actúa exclusivamente sobre la posición del root/grupo contenedor,
+nunca sobre los huesos.
+
+### Patadas consecutivas: animación sin "cooldown" fantasma
+
+`L.actionUntil` bajó de 350 a 120 ms tras un remate. Pero el problema real
+no era la duración: `SteveCharacter.setAnim()` solo reinicia el timer de
+la pose cuando el ESTADO cambia (`if (state === this.animState) return`)
+— dos patadas seguidas nunca cambian de estado (ambas son `ANIM.KICK`),
+así que el swing no se reiniciaba en la segunda. `playKick()` (nuevo)
+fuerza el reinicio siempre, sin importar el estado previo; `GameClient`
+lo llama vía un flag de flanco (`L.justKicked`) en vez de `setAnim()`
+directamente cuando la acción fue un remate.
+
+### Falta en barrida: gana quien toca el balón primero, de verdad
+
+`resolveSlideChallenge` ya comparaba distancias, pero un balón LIBRE
+tocado limpiamente vía la colisión automática de cuerpo
+(`collideBallWithSlidingBody`, en el loop de `tick()`) nunca marcaba el
+desafío como resuelto — así que una barrida que despejaba un balón suelto
+y LUEGO rozaba a un rival (mismo lunge, ya en curso) igual podía cobrar
+falta. Ahora, tocar el balón (por cualquiera de los dos caminos: robo de
+un balón controlado, o colisión automática contra uno libre) marca
+`p.challenge.resolved = true` de inmediato, protegiendo el resto de ese
+mismo lunge de cualquier falta posterior — la falta solo se cobra si el
+PRIMER contacto alcanzable es directamente con el rival.
+
+### Colisión automática con el balón para TODOS los jugadores
+
+Antes, controlar el balón sin usar cruzar pie solo funcionaba para el
+arquero de pie (bloqueo/rebote, sin controlar) — cualquier otro jugador
+dejaba pasar el balón libre "entre las piernas". Ahora `collideBallWithPlayer`
+(cuando el jugador no está saltando, barriéndose ni en vuelo bajo) otorga
+posesión automática a QUIEN sea (`captureBall`, nuevo — mismo patrón que
+`catchBall` pero sin el flag `caught`) — cruzar pie pasa a ser una
+herramienta de precisión (robar/proteger/acomodar), no un requisito para
+el contacto en sí.
+
+### Asistencia de atajada: esfera generosa, además de la colisión real
+
+`PLAYER.DIVE_CATCH_SPHERE_RADIUS` (0.9 m, diámetro ≈ altura del jugador)
+define una esfera centrada a media altura del arquero — `checkDiveCatchSphere`
+en `GameRoom.js` la chequea ADEMÁS de (no en vez de) la colisión de
+cápsulas real, ambas dentro de SU área de meta y solo durante clavado
+(alto o bajo). Una atajada bien sincronizada tiene más margen de éxito
+sin volverse una captura irreal a distancia. Visualización de depuración
+(esfera roja translúcida) SOLO con `?debug=1` en la URL
+(`window.SOKKAIO_DEBUG`, chequeado en `main.js`) — nunca visible en el
+juego normal.
+
+### Paridad móvil completa
+
+- **Apuntar mientras se carga el remate**: ya funcionaba estructuralmente
+  (el botón de remate y el resto de la pantalla usan identificadores de
+  touch independientes — multi-touch nativo), verificado explícitamente.
+- **Sensibilidad Free/Aim**: `MobileControls.prefs.sensFree`/`sensAim`
+  (nuevo), aplicadas en `_bindLookLayer` según `input.kickHeld` esté
+  activo o no — configurables desde el panel de personalización.
+- **Controles ocultos en la pantalla de nickname**: `MobileControls` se
+  construye igual que antes (necesita existir para el flujo normal), pero
+  su root arranca con `.hidden` y recién se muestra en el handler
+  `net.on('joined', ...)` de `main.js`.
+- **Cambio de skin/posición en partida**: nuevo evento `changeLoadout`
+  (cliente -> servidor, validado igual que en `join` contra la lista real
+  de skins) y `playerUpdated` (servidor -> todos) — `GameClient` recrea el
+  `SteveCharacter` del jugador afectado (skin/posición quedan "horneadas"
+  en la construcción). Un botón `⚙` nuevo en el HUD (funciona con clic o
+  touch por igual, sin código específico de plataforma) abre el panel.
+- **Sprint automático según stamina**: `MobileControls.updateSprintAvailability(bool)`,
+  llamado cada frame desde `main.js` con `local.stamina > STAMINA_MIN_TO_SPRINT`
+  — al agotarse, el botón se apaga solo (clase `.unavailable`) y no
+  responde a toques hasta recuperarse, en vez de quedar "prendido" sin
+  efecto real.
+
 ## Optimización (anti-lag)
 
 - **Cancha, balón y HUD sin texturas**: solo `MeshLambertMaterial`/`MeshBasicMaterial`

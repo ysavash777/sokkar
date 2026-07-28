@@ -55,6 +55,35 @@
     <div id="stamina-wrap"><div id="stamina-bar"></div></div>
     <div id="power-wrap" class="hidden"><div id="power-bar"></div></div>
     <div id="messages"></div>
+    <button id="loadout-btn" type="button" title="Personalizar / ajustes">⚙</button>
+  </div>
+
+  <!-- Panel de personalización EN PARTIDA: cambiar skin/posición y, en
+       móvil, la sensibilidad de cámara — no depende de la pantalla de
+       nickname. Funciona igual con clic (PC) o toque (móvil). -->
+  <div id="loadout-panel" class="hidden">
+    <p class="loadout-title">Ajustes</p>
+    <label>Skin
+      <select id="loadout-skin"></select>
+    </label>
+    <label>Posición
+      <select id="loadout-position">
+        <option value="FIELD">Jugador de campo</option>
+        <option value="GK">Arquero</option>
+      </select>
+    </label>
+    <div id="loadout-sens-section" class="hidden">
+      <label>Sensibilidad libre <span id="loadout-sens-free-val"></span>
+        <input type="range" id="loadout-sens-free" min="0.3" max="2.5" step="0.05" />
+      </label>
+      <label>Sensibilidad apuntando <span id="loadout-sens-aim-val"></span>
+        <input type="range" id="loadout-sens-aim" min="0.3" max="2.5" step="0.05" />
+      </label>
+    </div>
+    <div class="loadout-actions">
+      <button type="button" id="loadout-apply-btn">Aplicar</button>
+      <button type="button" id="loadout-close-btn">Cerrar</button>
+    </div>
   </div>
 
   <script type="module" src="./src/main.js"></script>

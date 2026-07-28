@@ -17,7 +17,10 @@ const DEFAULT_LAYOUT = {
   jump: { xPct: 68, yPct: 58 },
   sprint: { xPct: 92, yPct: 58 },
 };
-const DEFAULT_PREFS = { scale: 1, opacity: 0.75 };
+// sensFree: sensibilidad de cámara al deslizar normalmente. sensAim:
+// sensibilidad SOLO mientras se mantiene el botón de remate (apuntado más
+// fino) — ver _bindLookLayer.
+const DEFAULT_PREFS = { scale: 1, opacity: 0.75, sensFree: 1, sensAim: 0.6 };
 
 const BUTTONS = [
   { id: 'kick', label: '⚽', kind: 'kick', big: true },
@@ -165,6 +168,12 @@ export class MobileControls {
       <label>Opacidad
         <input type="range" id="touch-opacity" min="0.3" max="1" step="0.05" />
       </label>
+      <label>Sensibilidad libre
+        <input type="range" id="touch-sens-free" min="0.3" max="2.5" step="0.05" />
+      </label>
+      <label>Sensibilidad apuntando
+        <input type="range" id="touch-sens-aim" min="0.3" max="2.5" step="0.05" />
+      </label>
       <div class="touch-settings-actions">
         <button type="button" id="touch-reset-btn">Restablecer</button>
         <button type="button" id="touch-done-btn">Listo</button>
@@ -175,8 +184,12 @@ export class MobileControls {
 
     const scaleInput = panel.querySelector('#touch-scale');
     const opacityInput = panel.querySelector('#touch-opacity');
+    const sensFreeInput = panel.querySelector('#touch-sens-free');
+    const sensAimInput = panel.querySelector('#touch-sens-aim');
     scaleInput.value = this.prefs.scale;
     opacityInput.value = this.prefs.opacity;
+    sensFreeInput.value = this.prefs.sensFree;
+    sensAimInput.value = this.prefs.sensAim;
     scaleInput.addEventListener('input', () => {
       this.prefs.scale = +scaleInput.value;
       this._applyPrefs();
@@ -185,6 +198,14 @@ export class MobileControls {
     opacityInput.addEventListener('input', () => {
       this.prefs.opacity = +opacityInput.value;
       this._applyPrefs();
+      this._save(STORAGE_PREFS_KEY, this.prefs);
+    });
+    sensFreeInput.addEventListener('input', () => {
+      this.prefs.sensFree = +sensFreeInput.value;
+      this._save(STORAGE_PREFS_KEY, this.prefs);
+    });
+    sensAimInput.addEventListener('input', () => {
+      this.prefs.sensAim = +sensAimInput.value;
       this._save(STORAGE_PREFS_KEY, this.prefs);
     });
 
@@ -204,6 +225,25 @@ export class MobileControls {
     // Nada de joystick/botones activos mientras se editan posiciones.
     this.input.setTouchAxis(null);
     this.input.setKickHeld(false);
+  }
+
+  /**
+   * Llamado cada frame desde afuera (main.js) con si el jugador tiene
+   * stamina suficiente para sprintar. Sin stamina: apaga el toggle solo
+   * (aunque siga tocado) y bloquea reintentos hasta recuperarse.
+   */
+  updateSprintAvailability(available) {
+    const btn = this.buttons.sprint;
+    if (!btn) return;
+    if (!available) {
+      if (!btn.classList.contains('unavailable')) {
+        btn.classList.remove('toggled', 'active');
+        btn.classList.add('unavailable');
+        this.input.setTouchSprint(false);
+      }
+    } else {
+      btn.classList.remove('unavailable');
+    }
   }
 
   _buildJoystick() {
@@ -293,6 +333,10 @@ export class MobileControls {
   _wireButton(btn, def) {
     const onDown = (e) => {
       if (this.editMode) return;
+      // Sprint sin stamina: el botón se apaga solo (ver
+      // updateSprintAvailability) y no responde hasta recuperarse — sin
+      // esto el jugador podía "reintentar" tocándolo igual.
+      if (def.id === 'sprint' && btn.classList.contains('unavailable')) return;
       e.preventDefault();
       e.stopPropagation();
       btn.classList.add('active');
@@ -315,7 +359,13 @@ export class MobileControls {
     btn.addEventListener('touchcancel', onUp, { passive: false });
   }
 
-  /** Arrastrar sobre el resto de la pantalla mueve la cámara (equivalente al mouse). */
+  /**
+   * Arrastrar sobre el resto de la pantalla mueve la cámara (equivalente
+   * al mouse) — con un dedo INDEPENDIENTE del que sostiene cualquier
+   * botón (identifiers de touch distintos), así que apuntar mientras se
+   * carga el remate funciona igual que soltar la carga en cualquier otro
+   * momento: no hay nada que lo bloquee.
+   */
   _bindLookLayer() {
     let touchId = null;
     let lastX = 0;
@@ -339,7 +389,11 @@ export class MobileControls {
         if (touchId === null) return;
         for (const t of e.changedTouches) {
           if (t.identifier !== touchId) continue;
-          this.input.addLookDelta(t.clientX - lastX, t.clientY - lastY);
+          // Sensibilidad "Aim" mientras se mantiene el botón de remate
+          // (apuntado más fino), "Free" el resto del tiempo — ajustables
+          // por separado desde el panel de ajustes.
+          const mult = this.input.kickHeld ? this.prefs.sensAim : this.prefs.sensFree;
+          this.input.addLookDelta((t.clientX - lastX) * mult, (t.clientY - lastY) * mult);
           lastX = t.clientX;
           lastY = t.clientY;
         }

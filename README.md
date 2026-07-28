@@ -16,6 +16,10 @@ selector. No hace falta tocar código.
 También elegís tu posición: **Jugador de campo** o **Arquero**. Solo el
 arquero puede hacer el clavado lateral (ver Controles).
 
+Ambas cosas también se pueden cambiar **en medio de la partida**, sin
+volver a la pantalla de nickname: botón `⚙` arriba a la derecha del HUD
+(funciona igual con clic o con el dedo).
+
 ## Controles
 
 | Entrada | Acción |
@@ -113,6 +117,9 @@ soporte touch) el juego reemplaza teclado/mouse por controles en pantalla:
   guarda en el dispositivo (`localStorage`) y persiste entre partidas.
 
 ## Correr en local
+
+Doble clic en [iniciar.bat](iniciar.bat) (Windows) — instala las
+dependencias la primera vez y levanta el servidor. O a mano:
 
 ```bash
 npm install

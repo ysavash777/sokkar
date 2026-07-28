@@ -29,7 +29,7 @@ export class NetworkClient {
       if (this.socket.connected) this.socket.emit('pingCheck', performance.now());
     }, 2000);
 
-    for (const ev of ['joined', 'joinError', 'playerJoined', 'playerLeft', 'goal', 'foul', 'steal', 'kicked', 'possession', 'caught']) {
+    for (const ev of ['joined', 'joinError', 'playerJoined', 'playerLeft', 'goal', 'foul', 'steal', 'kicked', 'possession', 'caught', 'playerUpdated']) {
       this.socket.on(ev, (data) => this.handlers[ev]?.(data));
     }
   }
@@ -53,18 +53,28 @@ export class NetworkClient {
     ]);
   }
 
-  /** pos: posición actual del jugador — el balón sale desde su frente. pitch: cámara (altura del remate). */
-  sendKick(yaw, power, pos, pitch) {
+  /**
+   * pos: posición actual del jugador — el balón sale desde su frente.
+   * pitch: cámara (altura del remate). vel: velocidad real del jugador
+   * [vx, vz] — el servidor la suma al impulso (Primera Ley de Newton).
+   */
+  sendKick(yaw, power, pos, pitch, vel) {
     this.socket.emit('kick', {
       yaw,
       power,
       pos: pos ? [+pos.x.toFixed(2), +pos.z.toFixed(2)] : undefined,
       pitch: Number.isFinite(pitch) ? +pitch.toFixed(3) : undefined,
+      vel: Array.isArray(vel) && vel.every(Number.isFinite) ? [+vel[0].toFixed(2), +vel[1].toFixed(2)] : undefined,
     });
   }
 
   sendChallenge(type, extra) {
     this.socket.emit('challenge', { type, ...extra });
+  }
+
+  /** Cambio de skin/posición EN PARTIDA, sin pasar por la pantalla de nickname. */
+  changeLoadout(skin, position) {
+    this.socket.emit('changeLoadout', { skin, position });
   }
 
   /**

@@ -213,6 +213,94 @@ body.is-mobile .controls-help {
   background: linear-gradient(90deg, #fb923c, #ef4444);
 }
 
+/* ---------- Personalización en partida (skin/posición/sensibilidad) ---------- */
+#loadout-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 1.1rem;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* En móvil el botón de pantalla completa de MobileControls ya ocupa esa
+   esquina — el de personalización se corre un poco para no superponerse. */
+body.is-mobile #loadout-btn {
+  right: 62px;
+}
+
+#loadout-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(320px, 88vw);
+  background: rgba(11, 18, 32, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  padding: 20px 22px;
+  color: #fff;
+  z-index: 25;
+}
+
+.loadout-title {
+  font-weight: 800;
+  font-size: 1.1rem;
+  margin-bottom: 14px;
+}
+
+#loadout-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+#loadout-panel select {
+  padding: 10px;
+  border-radius: 8px;
+  border: none;
+  background: #fff;
+  color: #111;
+  font-size: 0.95rem;
+}
+
+#loadout-panel input[type='range'] {
+  width: 100%;
+}
+
+.loadout-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.loadout-actions button {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  border: none;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#loadout-apply-btn {
+  background: #22c55e;
+  color: #052e16;
+}
+
+#loadout-close-btn {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
 #messages {
   position: absolute;
   top: 72px;
@@ -348,6 +436,14 @@ body.is-mobile .controls-help {
 .touch-btn.toggled {
   background: rgba(34, 197, 94, 0.55);
   border-color: #4ade80;
+}
+
+/* Sprint sin stamina suficiente: se apaga solo y no responde al toque
+   hasta que la stamina se recupera (ver MobileControls.updateSprintAvailability). */
+.touch-btn.unavailable {
+  background: rgba(80, 80, 80, 0.35);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.4);
 }
 
 /* Modo edición: contorno punteado para indicar que se puede arrastrar. */
