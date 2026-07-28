@@ -12,12 +12,22 @@ export class NetworkClient {
     this.serverTimeOffset = 0;
     this.myId = null;
     this.handlers = {};
+    this.ping = 0; // ms, RTT medido — ver pingCheck/pongCheck
 
     this.socket.on('snap', (snap) => {
       this.serverTimeOffset = snap.t - performance.now();
       this.snapshots.push(snap);
       if (this.snapshots.length > 30) this.snapshots.shift();
     });
+
+    // Ping: eco simple con el propio timestamp del cliente, sin depender
+    // del reloj del servidor.
+    this.socket.on('pongCheck', (ts) => {
+      this.ping = Math.round(performance.now() - ts);
+    });
+    setInterval(() => {
+      if (this.socket.connected) this.socket.emit('pingCheck', performance.now());
+    }, 2000);
 
     for (const ev of ['joined', 'joinError', 'playerJoined', 'playerLeft', 'goal', 'foul', 'steal', 'kicked', 'possession', 'caught']) {
       this.socket.on(ev, (data) => this.handlers[ev]?.(data));

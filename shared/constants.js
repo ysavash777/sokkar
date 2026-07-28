@@ -29,7 +29,12 @@ export const BALL = {
   RADIUS: 0.35,
   GRAVITY: 20,
   GROUND_RESTITUTION: 0.55,
-  ROLL_FRICTION: 0.6, // frenado por segundo (factor exponencial)
+  // Frenado en el piso: subido (antes 0.6) para que no recorra tanto al
+  // frenar — mitad arcade, no una desaceleración 100% realista. Combinado
+  // con ROLL_STOP_SPEED para que no quede reptando a paso de tortuga
+  // eternamente (el decaimiento exponencial puro nunca llega a 0 solo).
+  ROLL_FRICTION: 1.6,
+  ROLL_STOP_SPEED: 0.35, // por debajo de esto, se frena en seco
   AIR_DRAG: 0.12,
   MAX_SPEED: 44,
 };
@@ -92,15 +97,21 @@ export const ACTIONS = {
   KICK_RANGE: 1.5,
   KICK_CHARGE_TIME_MS: 900,
   RECAPTURE_DELAY_MS: 450, // quien patea no re-captura su propio pase al instante
-  // Altura del remate: DESACOPLADA de la potencia — la controla sobre todo
-  // hacia dónde mira verticalmente la cámara (pitch), no cuánto se cargó
-  // la barra. Así un toque mínimo (poca potencia/distancia) apuntando bien
-  // arriba igual levanta el balón lo suficiente para un centro/globo corto
-  // y controlable, en vez de quedar atado a rematar fuerte para poder
-  // levantarla. vel.y = BASE + pitchNorm*PITCH_MAX + charge*CHARGE_BONUS.
+  // Altura del remate: depende SOLO de hacia dónde mira la cámara (pitch),
+  // NUNCA de cuánto se cargó la barra — la potencia no debe determinar la
+  // altura, eso lo dijiste explícitamente. En cambio, levantar el balón
+  // SÍ le cuesta algo de velocidad horizontal (KICK_HORIZ_LIFT_PENALTY):
+  // así la altura queda relacionada con la distancia/velocidad real, no
+  // sumada gratis encima de la potencia completa — un remate a barra
+  // llena apuntando al cielo llega más lejos que uno a media barra, pero
+  // ambos suben lo MISMO si apuntan igual. Con la curva de potencia actual
+  // (que ya sube rápido), esto hace que "media barra + buena cámara" dé un
+  // centro corto y controlable, y barra llena dé un centro/pelotazo más
+  // largo a la misma altura — sin necesitar cargar al máximo para un buen
+  // centro, ni que un toque mínimo mande la pelota a upa como un cañonazo.
   KICK_LIFT_BASE: 0.4, // lift residual incluso mirando al piso (nunca 100% pegado)
-  KICK_LIFT_PITCH_MAX: 9.5, // lift máximo por apuntar la cámara al cielo (solo)
-  KICK_LIFT_CHARGE_BONUS: 4, // lift extra según la carga (comba en remates de potencia)
+  KICK_LIFT_PITCH_MAX: 9.5, // lift máximo por apuntar la cámara al cielo
+  KICK_HORIZ_LIFT_PENALTY: 0.4, // fracción de velocidad horizontal que "cuesta" el lift máximo
 
   // Cruzar pie (clic ruedita): SIN cooldown — se puede spamear o cronometrar.
   // Controla/roba el balón si está dentro del área de control circular

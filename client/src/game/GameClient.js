@@ -4,6 +4,7 @@ import { SteveCharacter } from '../entities/SteveCharacter.js';
 import { Ball } from '../entities/Ball.js';
 import { createPitch } from '../entities/Pitch.js';
 import { CameraController } from '../core/CameraController.js';
+import { SoundManager } from '../audio/SoundManager.js';
 
 const HALF_L = FIELD.LENGTH / 2;
 const HALF_W = FIELD.WIDTH / 2;
@@ -61,6 +62,7 @@ export class GameClient {
     this.ballOwnerId = null;
     this.sendAccumulator = 0;
     this.kickCharge = 0;
+    this.sound = new SoundManager();
 
     this.scene.add(createPitch());
     this.ball = new Ball();
@@ -173,6 +175,7 @@ export class GameClient {
       if (data.id === this.ballOwnerId) this.ballOwnerId = null;
       const ch = this.characters.get(data.id);
       if (ch && data.id !== this.myId) ch.setAnim(ANIM.KICK);
+      this.sound.playShot();
     });
   }
 
@@ -199,6 +202,8 @@ export class GameClient {
       this.sendAccumulator = 0;
       this.net.sendState(this.local.pos, this.local.yaw, this.local.anim, this.local.sprinting);
     }
+
+    if (this.myId) this.hud.setPing(this.net.ping);
   }
 
   updateLocalPlayer(dt) {
@@ -468,6 +473,11 @@ export class GameClient {
     else if (speed > 0) L.anim = L.sprinting ? ANIM.SPRINT : ANIM.JOG;
     else L.anim = ANIM.IDLE;
 
+    // Trote/sprint en bucle (con o sin balón), tono según la velocidad
+    // real — solo durante el trote/sprint genuino, no en barrida/clavado/etc.
+    const jogging = L.anim === ANIM.JOG || L.anim === ANIM.SPRINT;
+    this.sound.updateFootsteps(jogging ? speed : 0, controllingBall);
+
     // Círculo del área de control, siempre bajo los pies del jugador local.
     this.controlRing.visible = true;
     this.controlRing.position.set(L.pos.x, 0.02, L.pos.z);
@@ -504,10 +514,11 @@ export class GameClient {
       const t = (this.kickCharge - ACTIONS.KICK_PIVOT_CHARGE) / (1 - ACTIONS.KICK_PIVOT_CHARGE);
       speed = ACTIONS.KICK_PIVOT_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_PIVOT_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
     }
-    const liftY =
-      ACTIONS.KICK_LIFT_BASE + pitchNorm * ACTIONS.KICK_LIFT_PITCH_MAX + this.kickCharge * ACTIONS.KICK_LIFT_CHARGE_BONUS;
-    const vx = Math.sin(dirYaw) * speed;
-    const vz = Math.cos(dirYaw) * speed;
+    const liftY = ACTIONS.KICK_LIFT_BASE + pitchNorm * ACTIONS.KICK_LIFT_PITCH_MAX;
+    const liftFraction = liftY / (ACTIONS.KICK_LIFT_BASE + ACTIONS.KICK_LIFT_PITCH_MAX);
+    const horizSpeed = speed * (1 - ACTIONS.KICK_HORIZ_LIFT_PENALTY * liftFraction);
+    const vx = Math.sin(dirYaw) * horizSpeed;
+    const vz = Math.cos(dirYaw) * horizSpeed;
 
     let px = L.pos.x + Math.sin(dirYaw) * 0.6;
     let pz = L.pos.z + Math.cos(dirYaw) * 0.6;
@@ -570,8 +581,8 @@ export class GameClient {
       let tz;
       let ty;
       if (L.holding) {
-        tx = L.pos.x + Math.sin(L.yaw) * 0.35;
-        tz = L.pos.z + Math.cos(L.yaw) * 0.35;
+        tx = L.pos.x + Math.sin(L.yaw) * 0.45;
+        tz = L.pos.z + Math.cos(L.yaw) * 0.45;
         ty = L.pos.y + 1.15;
       } else {
         const dist = L.anim === ANIM.SPRINT ? DRIBBLE.DIST_SPRINT : L.anim === ANIM.JOG ? DRIBBLE.DIST_JOG : DRIBBLE.DIST_IDLE;

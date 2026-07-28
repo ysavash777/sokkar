@@ -57,6 +57,8 @@ io.on('connection', (socket) => {
   socket.on('state', (data) => room.onPlayerState(socket.id, data));
   socket.on('kick', (data) => room.onKick(socket.id, data));
   socket.on('challenge', (data) => room.onChallenge(socket.id, data));
+  // Medición de ping: eco simple, el cliente calcula el RTT con su propio timestamp.
+  socket.on('pingCheck', (ts) => socket.emit('pongCheck', ts));
   socket.on('disconnect', () => room.removePlayer(socket.id));
 });
 

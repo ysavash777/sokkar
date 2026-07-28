@@ -91,6 +91,19 @@ function poseLimb(node, angleX) {
   node.position.copy(node.userData.basePos);
 }
 
+/**
+ * Aplica un cuaternión ABSOLUTO (no relativo a la pose base) a un hueso.
+ * Se usa para reproducir poses exportadas de Blockbench tal cual (p.ej. la
+ * barrida) que rotan en más de un eje — la pose base de este rig es la
+ * identidad en todos los huesos (verificado en steve.gltf), así que el
+ * cuaternión exportado ES directamente la rotación local a aplicar.
+ */
+function poseLimbQuat(node, x, y, z, w) {
+  if (!node) return;
+  node.quaternion.set(x, y, z, w);
+  node.position.copy(node.userData.basePos);
+}
+
 export class SteveCharacter {
   constructor(team, nickname, skin = DEFAULT_SKIN, position = 'FIELD') {
     this.group = new THREE.Group();
@@ -142,8 +155,14 @@ export class SteveCharacter {
     this.legR = findBone('Right_Leg');
     this.armL = findBone('Left_Arm');
     this.armR = findBone('Right_Arm');
+    // Torso/cadera/cabeza: no se posan con poseLimb (rotación simple en X),
+    // solo para la barrida (poseLimbQuat, cuaterniones absolutos exportados
+    // de Blockbench — ver ANIM.SLIDE más abajo).
+    this.waist = findBone('Waist');
+    this.torso = findBone('Body');
+    this.head = findBone('Head');
 
-    for (const n of [this.armL, this.armR, this.legL, this.legR]) {
+    for (const n of [this.armL, this.armR, this.legL, this.legR, this.waist, this.torso, this.head]) {
       if (!n) continue;
       n.userData.baseQuat = n.quaternion.clone();
       n.userData.basePos = n.position.clone();
@@ -189,10 +208,15 @@ export class SteveCharacter {
     this.actionTimer += dt;
     const s = this.animState;
 
-    // Reset de pose base.
+    // Reset de pose base. Waist/torso/cabeza solo los toca la barrida
+    // (poseLimbQuat, cuaterniones absolutos) — sin este reset quedarían
+    // trabados en esa pose al pasar a cualquier otra animación.
     this.body.rotation.x = 0;
     this.body.rotation.z = 0;
     this.body.position.y = 0;
+    poseLimbQuat(this.waist, 0, 0, 0, 1);
+    poseLimbQuat(this.torso, 0, 0, 0, 1);
+    poseLimbQuat(this.head, 0, 0, 0, 1);
 
     // Lado real del vuelo del arquero (clavado / vuelo bajo), derivado del
     // movimiento real (no de un signo fijo) — así la animación siempre
@@ -227,12 +251,21 @@ export class SteveCharacter {
       poseLimb(this.armR, -1.1);
       groundSensitive = true;
     } else if (s === ANIM.SLIDE) {
-      // Barrida: cuerpo reclinado, pierna derecha extendida al frente.
-      this.body.rotation.x = -0.95;
-      poseLimb(this.legR, -1.3);
-      poseLimb(this.legL, 0.35);
-      poseLimb(this.armL, 0.8);
-      poseLimb(this.armR, 0.8);
+      // Barrida: pose exacta provista (barrida.gltf) — cuaterniones
+      // absolutos exportados de Blockbench, tal cual (la pose base de
+      // este rig es la identidad en todos los huesos). El grupo
+      // contenedor (this.body) queda sin rotación extra: el reclinado
+      // real lo da la rotación propia del torso ("Body"/"Waist"), no un
+      // hack sobre el grupo entero.
+      this.body.rotation.x = 0;
+      this.body.rotation.z = 0;
+      poseLimbQuat(this.waist, 0, 0, -0.043619387365336, 0.9990482215818578);
+      poseLimbQuat(this.torso, -0.9320078692827984, 0, 0, 0.3624380382837017);
+      poseLimbQuat(this.head, 0.04797812852134394, 0, 0, 0.9988483864849507);
+      poseLimbQuat(this.armL, 0.3090169943749474, 0, 0, 0.9510565162951535);
+      poseLimbQuat(this.armR, 0.848048096156426, 0, 0, 0.5299192642332049);
+      poseLimbQuat(this.legR, 0.5855164753608278, -0.10111450938374256, 0.05700799393724121, 0.8023069248737478);
+      poseLimbQuat(this.legL, -0.5847752095318209, 0.16648725236777703, 0.10663245425069755, 0.7867334166136049);
       groundSensitive = true;
     } else if (s === ANIM.KICK) {
       // Patada rápida con la derecha (~0.3 s de swing).
@@ -285,12 +318,13 @@ export class SteveCharacter {
       poseLimb(this.armR, -1.8);
       groundSensitive = true;
     } else if (s === ANIM.CATCH) {
-      // Arquero con el balón atajado en las manos: cuerpo recto, brazos
-      // extendidos al frente (pose "zombie").
+      // Arquero con el balón atajado en las manos: pose exacta provista
+      // (atajada.gltf) — cuerpo recto (torso/cadera sin rotación extra),
+      // ambos brazos a +90° sobre X (pose "zombie").
       poseLimb(this.legL, 0);
       poseLimb(this.legR, 0);
-      poseLimb(this.armL, -1.57);
-      poseLimb(this.armR, -1.57);
+      poseLimb(this.armL, Math.PI / 2);
+      poseLimb(this.armR, Math.PI / 2);
     } else if (s === ANIM.JUMP) {
       poseLimb(this.legL, 0.5);
       poseLimb(this.legR, -0.5);
@@ -321,7 +355,13 @@ export class SteveCharacter {
   _clampToGround() {
     this.group.updateMatrixWorld(true);
     _groundBox.setFromObject(this.body, true);
-    if (_groundBox.min.y < 0) {
+    // Si el jugador está sobre el piso (no en pleno clavado en el aire),
+    // la pose debe quedar realmente APOYADA en el piso, no flotando unos
+    // centímetros arriba — se ajusta siempre, no solo cuando hunde. En el
+    // aire (root elevado) solo se actúa como red de seguridad si algo
+    // quedó por debajo del piso, sin forzarlo a "tocar" mientras vuela.
+    const grounded = this.group.position.y < 0.1;
+    if (grounded || _groundBox.min.y < 0) {
       this.body.position.y -= _groundBox.min.y;
     }
   }

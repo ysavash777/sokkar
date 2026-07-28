@@ -420,6 +420,13 @@ export function stepBall(ball, dt) {
     const roll = Math.exp(-BALL.ROLL_FRICTION * dt);
     ball.vel.x *= roll;
     ball.vel.z *= roll;
+    // Frenado en seco: el decaimiento exponencial puro nunca llega a 0 solo
+    // (reptaría a paso de tortuga indefinidamente) — por debajo del umbral,
+    // se detiene del todo.
+    if (Math.hypot(ball.vel.x, ball.vel.z) < BALL.ROLL_STOP_SPEED) {
+      ball.vel.x = 0;
+      ball.vel.z = 0;
+    }
   }
 
   // Bandas laterales (Z).

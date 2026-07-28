@@ -65,10 +65,12 @@ arquero puede hacer el clavado lateral (ver Controles).
 > de frente, y arrancar a moverse o frenar tiene una breve inercia
 > (aceleración/desaceleración, no es instantáneo).
 >
-> Altura del remate: depende de hacia dónde mirás con la cámara, no de
-> cuánta barra cargaste — mirá al cielo y hasta un toque suave levanta el
-> balón por encima de la cabeza (centros cortos y controlables); mirá al
-> piso y sale rasante, aunque cargues a fondo. Mientras cargás, la línea
+> Altura del remate: depende SOLO de hacia dónde mirás con la cámara, la
+> potencia nunca la determina — mirá al cielo y sale con arco, mirá al
+> piso y sale rasante, sin importar cuánta barra cargaste. Eso sí, cuanto
+> más alto lo levantás, menos lejos llega (te "cuesta" velocidad
+> horizontal) — un buen centro se hace con un buen timing (~media barra)
+> apuntando bien arriba, no cargando al máximo. Mientras cargás, la línea
 > de puntería muestra el arco real que va a hacer el balón, ajustándose
 > en vivo a la potencia y hacia dónde apuntás.
 >
@@ -88,6 +90,12 @@ arquero puede hacer el clavado lateral (ver Controles).
 > las manos hasta que patea. Fuera del área, controla con los pies como
 > cualquier jugador. Ninguna de estas acciones tiene cooldown — la única
 > acción del juego con cooldown es la barrida recta.
+
+Arriba a la izquierda del HUD hay un medidor de ping en vivo. Hay sonido
+de trote (distinto con/sin balón, el tono sube y baja con la velocidad) y
+de remate — para que suenen hace falta soltar `run.ogg`, `ballrun.ogg` y
+`shot.ogg` en [client/assets/sounds/](client/assets/sounds) (no vienen
+incluidos; sin ellos el juego funciona igual, mudo).
 
 ## Móvil
 

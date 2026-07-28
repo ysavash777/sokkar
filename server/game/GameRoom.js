@@ -212,23 +212,23 @@ export class GameRoom {
       const t = (charge - ACTIONS.KICK_PIVOT_CHARGE) / (1 - ACTIONS.KICK_PIVOT_CHARGE);
       speed = ACTIONS.KICK_PIVOT_SPEED + (ACTIONS.KICK_POWER - ACTIONS.KICK_PIVOT_SPEED) * Math.pow(t, ACTIONS.KICK_CURVE);
     }
-    // Elevación DESACOPLADA de la potencia: la maneja sobre todo hacia
-    // dónde mira verticalmente la cámara (pitch), no cuánto se cargó la
-    // barra — así un toque mínimo apuntando bien arriba igual levanta el
-    // balón lo suficiente para un centro/globo corto y controlable, en vez
-    // de necesitar rematar fuerte para poder levantarla (lo que solo
-    // permitía pelotazos lejanos con altura, nunca centros cortos).
+    // Elevación: depende SOLO de hacia dónde mira la cámara (pitch), nunca
+    // de la potencia — pero levantar el balón cuesta algo de velocidad
+    // horizontal (proporcional a cuánto se está levantando), así la altura
+    // queda relacionada con la distancia/velocidad real en vez de sumarse
+    // gratis encima de la potencia completa.
     const pitch = Number.isFinite(data?.pitch)
       ? Math.max(CAMERA.PITCH_MIN, Math.min(CAMERA.PITCH_MAX, data.pitch))
       : 0.35;
     const pitchNorm = 1 - (pitch - CAMERA.PITCH_MIN) / (CAMERA.PITCH_MAX - CAMERA.PITCH_MIN); // 0 piso, 1 cielo
-    const liftY =
-      ACTIONS.KICK_LIFT_BASE + pitchNorm * ACTIONS.KICK_LIFT_PITCH_MAX + charge * ACTIONS.KICK_LIFT_CHARGE_BONUS;
+    const liftY = ACTIONS.KICK_LIFT_BASE + pitchNorm * ACTIONS.KICK_LIFT_PITCH_MAX;
+    const liftFraction = liftY / (ACTIONS.KICK_LIFT_BASE + ACTIONS.KICK_LIFT_PITCH_MAX); // 0..1
+    const horizSpeed = speed * (1 - ACTIONS.KICK_HORIZ_LIFT_PENALTY * liftFraction);
     p.lastKickAt = now;
     ball.ownerId = null;
     ball.caught = false;
-    ball.vel.x = Math.sin(dirYaw) * speed;
-    ball.vel.z = Math.cos(dirYaw) * speed;
+    ball.vel.x = Math.sin(dirYaw) * horizSpeed;
+    ball.vel.z = Math.cos(dirYaw) * horizSpeed;
     ball.vel.y = liftY;
     this.io.emit('kicked', { id });
   }
@@ -447,9 +447,10 @@ export class GameRoom {
     let tz;
     let ty;
     if (ball.caught) {
-      // Arquero con el balón atajado: fijo cerca del pecho, no a los pies.
-      tx = owner.pos.x + Math.sin(owner.yaw) * 0.35;
-      tz = owner.pos.z + Math.cos(owner.yaw) * 0.35;
+      // Arquero con el balón atajado: entre las manos, a la altura del
+      // pecho (pose ANIM.CATCH — brazos extendidos al frente).
+      tx = owner.pos.x + Math.sin(owner.yaw) * 0.45;
+      tz = owner.pos.z + Math.cos(owner.yaw) * 0.45;
       ty = owner.pos.y + 1.15;
     } else {
       const dist = !owner.moving

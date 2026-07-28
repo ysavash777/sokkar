@@ -2,6 +2,7 @@
 export class HUD {
   constructor() {
     this.root = document.getElementById('hud');
+    this.ping = document.getElementById('ping');
     this.scoreRed = document.getElementById('score-red');
     this.scoreBlue = document.getElementById('score-blue');
     this.staminaBar = document.getElementById('stamina-bar');
@@ -22,6 +23,13 @@ export class HUD {
 
   show() {
     this.root.classList.remove('hidden');
+  }
+
+  /** ms de ping (RTT); null mientras no se midió todavía. */
+  setPing(ms) {
+    this.ping.textContent = Number.isFinite(ms) ? `${ms} ms` : '-- ms';
+    this.ping.classList.toggle('ping-bad', ms > 150);
+    this.ping.classList.toggle('ping-mid', ms > 70 && ms <= 150);
   }
 
   setScore(score) {

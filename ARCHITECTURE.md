@@ -502,38 +502,37 @@ del cliente (`GameClient` ya no setea `local.anim = ANIM.EXTEND`): la
 acción sigue funcionando igual (server-authoritative, sin cooldown), pero
 visualmente no hay pose — es un gesto instantáneo, sin metida de pie.
 
-### Altura del remate: desacoplada de la potencia
+### Altura del remate: depende del pitch, nunca de la potencia
 
-Primera versión: la altura dependía de `charge` igual que la potencia
-(`liftT = (charge-0.1)/0.9`), así que con la barra casi vacía la
-elevación quedaba en ~0 sin importar hacia dónde mirara la cámara —
-imposible levantar un centro corto y controlable, solo pelotazos largos
-con algo de altura si además se cargaba fuerte.
-
-Ahora la altura (`ball.vel.y`) es una suma de tres términos independientes
-(`GameRoom.onKick`, mismo cálculo replicado en el cliente para la
-previsualización — ver abajo):
+Primera versión: la altura dependía de `charge` igual que la potencia, así
+que con la barra casi vacía la elevación quedaba en ~0 sin importar hacia
+dónde mirara la cámara. Segunda versión: altura = pitch + un extra por
+`charge` — mejor, pero la potencia todavía "sumaba gratis" altura encima
+de la distancia completa, dando centros que llegaban muy largos y
+relativamente bajos (a media barra ya se alcanzan ~25 m/s horizontales
+con la curva de potencia actual). Versión actual (`GameRoom.onKick`, mismo
+cálculo replicado en el cliente para la previsualización):
 
 ```
-vel.y = KICK_LIFT_BASE + pitchNorm · KICK_LIFT_PITCH_MAX + charge · KICK_LIFT_CHARGE_BONUS
+liftY   = KICK_LIFT_BASE + pitchNorm · KICK_LIFT_PITCH_MAX        // SOLO pitch
+horizSpeed = speed · (1 − KICK_HORIZ_LIFT_PENALTY · (liftY / (BASE+MAX)))
+vel.x/z = horizSpeed en la dirección del remate
+vel.y   = liftY
 ```
 
-- `KICK_LIFT_BASE` (0.4): lift residual incluso mirando al piso — nunca
-  sale 100% pegado al suelo.
-- `pitchNorm · KICK_LIFT_PITCH_MAX` (hasta 9.5): el término dominante,
-  depende SOLO de hacia dónde apunta la cámara verticalmente
-  (`pitchNorm` normaliza `CAMERA.PITCH_MIN/MAX` a 0=piso..1=cielo) — con
-  esto, incluso un toque al 5% de carga mirando bien arriba levanta el
-  balón por encima de la altura de la cabeza (~1.8 m), habilitando centros
-  cortos y controlables.
-- `charge · KICK_LIFT_CHARGE_BONUS` (hasta 4): un extra menor según la
-  potencia, para que los remates a barra llena también puedan salir con
-  comba (no solo los suaves).
-
-La potencia (`speed`, distancia horizontal) sigue dependiendo solo de
-`charge`, sin tocar — quedan dos ejes de control totalmente
-independientes: cuánto se carga la barra = qué tan lejos/fuerte sale;
-hacia dónde mira la cámara = qué tan alto sale.
+- La altura (`liftY`) depende ÚNICAMENTE de `pitchNorm` (hacia dónde mira
+  la cámara verticalmente) — la potencia (`charge`) no la toca para nada.
+- Levantar el balón SÍ cuesta velocidad horizontal, proporcional a cuánto
+  se está levantando (`KICK_HORIZ_LIFT_PENALTY`, hasta 40% de reducción
+  con el lift al máximo) — así la altura queda relacionada con la
+  distancia/velocidad real en vez de sumarse gratis sobre la potencia
+  completa.
+- Con la curva de potencia actual (que ya sube rápido con la carga), esto
+  da: a ~media barra + buena cámara, un centro corto-medio bien arqueado
+  (alcance moderado, un par de metros de altura de pico) — el "buen
+  timing" pedido; a barra llena + misma cámara, un centro/pelotazo más
+  largo a la MISMA altura (la potencia extra se va toda a distancia, no a
+  subir más), útil para despejes o centros desde más lejos.
 
 ### Recorrido previsto del remate (previsualización en vivo)
 
@@ -587,6 +586,93 @@ gateado por `editMode` en vez de disparar la acción. Layout (posiciones en
 instanciar. Al entrar en modo edición se limpia cualquier input táctil
 activo (`setTouchAxis(null)`, `setKickHeld(false)`) para que no quede un
 movimiento o remate "pegado" mientras el jugador reacomoda los controles.
+
+### Poses de barrida y atajada: cuaterniones exactos, no aproximados a mano
+
+Las primeras versiones de las poses de barrida y atajada eran valores
+"a ojo" (un solo ángulo en X vía `poseLimb`) y no se veían bien —
+terminaban en una postura rara, sin relación real con lo que se buscaba.
+Se corrigieron usando cuaterniones EXACTOS de dos archivos `.gltf` de
+referencia (posados en Blockbench, mismo rig que `steve.gltf`). Punto
+clave que lo hizo posible: **la pose base (bind pose) de este rig es la
+identidad en TODOS los huesos** (verificado leyendo `steve.gltf` — ningún
+nodo trae `rotation`), así que el cuaternión que exporta Blockbench para
+una pose ES directamente la rotación local absoluta a aplicar, sin
+necesidad de componerlo con nada.
+
+- `poseLimbQuat(node, x, y, z, w)` (nueva, junto a `poseLimb`): aplica un
+  cuaternión ABSOLUTO a un hueso, en vez de un ángulo relativo en X. Se
+  usa para huesos con rotación en más de un eje (p. ej. las piernas de la
+  barrida), que `poseLimb` no puede representar.
+- Se agregaron lookups para `waist`/`torso` ("Body")/`head` (antes solo
+  `armL/armR/legL/legR`), con su `baseQuat`/`basePos` guardados igual que
+  el resto — necesarios porque la barrida real rota también el torso y la
+  cintura, no solo brazos y piernas. Como solo la barrida los usa, se
+  resetean a identidad al principio de cada `update()` (si no, quedarían
+  trabados en la pose de barrida al pasar a cualquier otra animación).
+- `ANIM.SLIDE` ahora reproduce el cuaternión de `barrida.gltf` en waist,
+  torso, head, ambos brazos y ambas piernas — `this.body.rotation`
+  (el grupo contenedor) queda en 0, el reclinado real lo dan los huesos.
+- `ANIM.CATCH` se simplificó radicalmente: la pose real es solo brazos a
+  `+90°` sobre X (`Math.PI/2`, no `-1.57` como antes — el signo estaba
+  invertido) con el torso sin rotación extra ("parado recto"). El offset
+  del balón (`owner.pos + forward·0.45`, altura `+1.15`) se ajustó para
+  caer entre las manos con este brazo extendido, no en los pies.
+
+### El clamp al piso ahora también "asienta" las poses, no solo evita hundirlas
+
+`_clampToGround()` empujaba hacia arriba si algo quedaba bajo el piso,
+pero nunca hacia abajo — la barrida terminaba flotando ~30 cm sobre el
+piso en vez de tocarlo (pedido explícito: "en contacto con el suelo").
+Ahora, si el jugador está sobre el piso (`group.position.y < 0.1`, es
+decir NO en pleno clavado en el aire), la pose se ajusta SIEMPRE para
+tocar el piso exactamente, no solo cuando hunde; en el aire, sigue
+actuando solo como red de seguridad (nunca fuerza a "aterrizar" a mitad
+de vuelo).
+
+### Física de la pelota: más arcade, menos deceleración eterna
+
+`ROLL_FRICTION` (frenado al rodar) subió de 0.6 a 1.6 — el remate ya no
+recorre tanto antes de empezar a frenar en serio (pedido: "mitad arcade
+mitad físicas", no una desaceleración 100% realista). Además se agregó
+`ROLL_STOP_SPEED` (0.35 m/s): por debajo de ese umbral la pelota se
+detiene EN SECO. El decaimiento exponencial puro (`vel *= exp(-k·dt)`)
+matemáticamente nunca llega a exactamente 0 — sin este corte, la pelota
+quedaba reptando a paso de tortuga indefinidamente después de perder casi
+toda su fuerza, que era justo la queja ("queda moviéndose muy lentamente
+cuando ya pierde su fuerza").
+
+### Medidor de ping
+
+Arriba a la izquierda del HUD (`#ping`). Mecanismo simple y directo: el
+cliente manda su propio `performance.now()` en un evento `pingCheck` cada
+2 s (`NetworkClient`), el servidor lo devuelve tal cual en `pongCheck`
+(`server/index.js`, un eco sin lógica), y el cliente calcula
+`RTT = ahora - timestamp_enviado` — no depende del reloj del servidor,
+solo del propio. Color según rango (verde/amarillo/rojo) vía clases CSS
+en `HUD.setPing()`.
+
+### Sonidos: trote con/sin balón, patada
+
+`client/src/audio/SoundManager.js` maneja tres sonidos:
+
+- `run.ogg` / `ballrun.ogg`: loops (`HTMLAudioElement.loop = true`) que
+  suenan mientras el jugador local trota/sprinta genuinamente (`ANIM.JOG`
+  o `ANIM.SPRINT`, no durante barrida/clavado/etc.), alternando según si
+  tiene el balón o no. El `playbackRate` se ajusta cada frame según la
+  velocidad real (`RATE_MIN`..`RATE_MAX`, interpolado hasta
+  `PLAYER.SPRINT_SPEED`) — sube y baja de tono en vivo, sin reiniciar el
+  audio (no hay "corte"), y se pausa (no se destruye) al pasar de un loop
+  al otro o al detenerse, para retomar suave la próxima vez.
+- `shot.ogg`: one-shot en el evento de red `kicked`, que ya llega para
+  CUALQUIER patada (propia o de otro jugador) — no hace falta lógica
+  aparte para distinguir el origen. Se clona el nodo `Audio` en cada
+  reproducción para permitir que se superpongan varios remates seguidos.
+
+**Los archivos de audio no están incluidos** (`client/assets/sounds/`
+tiene un `README.md` explicando qué falta) — si no están presentes,
+`SoundManager` falla en silencio (`.catch(() => {})` en cada `.play()`),
+el juego funciona igual, simplemente no suena hasta que se agreguen.
 
 ## Optimización (anti-lag)
 
