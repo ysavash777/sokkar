@@ -30,11 +30,12 @@ export const BALL = {
   GRAVITY: 20,
   GROUND_RESTITUTION: 0.5, // (antes 0.55) el césped absorbe algo más de energía al botar
   BOUNCE_HORIZ_DAMPING: 0.92, // fricción horizontal en el instante del bote (no solo rodando)
-  // Frenado en el piso: subido (antes 0.6) para que no recorra tanto al
-  // frenar — mitad arcade, no una desaceleración 100% realista. Combinado
-  // con ROLL_STOP_SPEED para que no quede reptando a paso de tortuga
+  // Frenado en el piso: mitad arcade, no una desaceleración 100% realista.
+  // Bajado un poco (antes 1.6, que frenaba muy brusco) para que ruede un
+  // poco más manteniendo la sensación natural. Combinado con
+  // ROLL_STOP_SPEED para que no quede reptando a paso de tortuga
   // eternamente (el decaimiento exponencial puro nunca llega a 0 solo).
-  ROLL_FRICTION: 1.6,
+  ROLL_FRICTION: 1.1,
   ROLL_STOP_SPEED: 0.35, // por debajo de esto, se frena en seco
   AIR_DRAG: 0.12,
   MAX_SPEED: 44,
