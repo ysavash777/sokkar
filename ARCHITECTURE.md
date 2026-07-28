@@ -368,12 +368,29 @@ con las manos (ver "Área de meta" más abajo).
 
 Al aterrizar, el arquero no vuelve directo a la pose de pie: queda
 **tendido de costado** (`ANIM.DIVE_GROUND`, `PLAYER.DIVE_GROUND_MS` ≈
-650 ms, sin control de WASD) hacia el lado real por el que voló, y recién
+350 ms, sin control de WASD) hacia el lado real por el que voló, y recién
 después se levanta solo (vuelve a control normal) — salvo que haya
 atajado el balón en el aire, en cuyo caso aterriza directo en la pose de
 atajada (`ANIM.CATCH`) en vez de desplomarse. Antes el aterrizaje volvía
 a la pose normal en el mismo frame, lo que se veía como un salto brusco
 del vuelo a estar parado.
+
+#### Ninguna pose atraviesa el piso
+
+Las poses de cuerpo entero (`KNOCKED`, `SLIDE`, `DIVE`, `LOW_DIVE`,
+`DIVE_GROUND`, `STUNNED`) rotan `this.body` alrededor de un pivote que NO
+coincide exactamente con el punto más bajo de la malla ya posada (huesos
+rotados vía `poseLimb`) — rotarlas podía hundir partes del cuerpo bajo el
+plano del piso. `SteveCharacter._clampToGround()` corrige esto al final
+de cada pose "sensible al piso": calcula el bounding box REAL del cuerpo
+con `Box3.setFromObject(this.body, true)` — el flag `precise` es clave,
+sin él Three.js devuelve el bounding box del bind-pose (sin aplicar el
+posado de huesos), que no sirve para detectar el hundimiento real de,
+por ejemplo, una pierna extendida en la barrida — y si el mínimo en Y
+queda por debajo de 0, empuja `body.position.y` hacia arriba lo
+suficiente para que nada quede bajo tierra. Se aplica solo a esas seis
+poses (no al ciclo de caminata/idle/salto/patada/atajada, que no
+clipeaban) para no pagar el costo de ese cálculo en el camino caliente.
 
 #### Dirección real de la animación (no un signo fijo)
 
@@ -405,13 +422,24 @@ pleno clavado o vuelo bajo.
 
 Cada arco tiene un **área de meta** rectangular (`FIELD.PENALTY_WIDTH` ×
 `FIELD.PENALTY_DEPTH`, dibujada en `Pitch.js`) frente a él. Dentro de SU
-propia área (`GameRoom.isInOwnPenaltyArea`), si el balón LIBRE **toca**
-el cuerpo del arquero mientras está en pleno clavado (`p.anim ===
-ANIM.DIVE`) o vuelo bajo (`p.challenge.type === 'lowdive'`), lo ataja con
-las manos automáticamente — no hace falta presionar nada, el contacto
-mismo lo dispara (`GameRoom.tick`, usa el valor de retorno `hit` de
+propia área (`GameRoom.isInOwnPenaltyArea`), si el balón LIBRE **toca el
+cuerpo** del arquero (no el círculo de control del piso, que es lo que
+usa cruzar pie normal) mientras está en el aire — clavado, un salto
+común, o vuelo bajo (`p.challenge.type === 'lowdive'`) — lo ataja con las
+manos automáticamente — no hace falta presionar nada, el contacto mismo
+lo dispara (`GameRoom.tick`, usa el valor de retorno `hit` de
 `collideBallWithAirborneBody`/`collideBallWithLowDiveBody` para decidir
-entre rebotar o atajar). `catchBall()` pasa `ball.ownerId` al arquero con
+entre rebotar o atajar). A propósito NO se exige `p.anim === ANIM.DIVE`:
+ese byte llega recién en el próximo sync de estado del cliente (20 Hz) y
+el contacto físico puede ocurrir en el servidor ANTES de que ese sync
+llegue — exigir el anim exacto hacía que la atajada fallara la mayoría de
+las veces (el balón terminaba controlado por el pie, como un cruzar pie
+normal, porque `resolveExtends` sí corría con la posición ya sincronizada
+mientras el anim todavía mostraba el estado anterior). Alcanza con que el
+arquero esté en el aire dentro de su propia área — cubre el clavado, el
+vuelo bajo y también un salto común para cabecear/despejar, como
+correspondería a un arquero real. `catchBall()` pasa `ball.ownerId` al
+arquero con
 un flag extra `ball.caught = true`; con ese flag, `dribble()` deja de
 perseguir el punto habitual a los pies y en cambio fija el balón cerca
 del pecho (`owner.pos + forward·0.35`, altura `owner.pos.y + 1.15`) — y

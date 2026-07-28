@@ -82,6 +82,7 @@ function loadSkinTexture(skinName) {
 
 const _xAxis = new THREE.Vector3(1, 0, 0);
 const _qDelta = new THREE.Quaternion();
+const _groundBox = new THREE.Box3();
 
 /** Aplica una rotación adicional sobre el eje X local, sobre la pose base del pivote. */
 function poseLimb(node, angleX) {
@@ -207,49 +208,47 @@ export class SteveCharacter {
     }
     this._prevPos.copy(this.group.position);
 
+    // Poses con rotación de cuerpo entero (caídas, barrida, vuelos): el
+    // pivote no coincide exactamente con el punto más bajo de la malla
+    // posada, así que rotarlas puede hundir partes del cuerpo bajo el
+    // piso — se corrigen al final con _clampToGround() (bounding box
+    // real, con huesos posados, no la del bind-pose). Se restringe a
+    // estas poses (no al ciclo de caminata/idle/salto/patada/atajada, que
+    // ya no clipean) para no pagar el costo de ese cálculo cada frame.
+    let groundSensitive = false;
+
     if (s === ANIM.KNOCKED) {
       // Cae hacia atrás por el empujón de la falta (el yaw ya lo orienta
       // en la dirección del golpe, ver GameClient).
       this.body.rotation.x = 1.05;
-      this.body.position.y = -0.28;
       poseLimb(this.legL, -0.5);
       poseLimb(this.legR, 0.5);
       poseLimb(this.armL, -1.1);
       poseLimb(this.armR, -1.1);
-      return;
-    }
-
-    if (s === ANIM.SLIDE) {
+      groundSensitive = true;
+    } else if (s === ANIM.SLIDE) {
       // Barrida: cuerpo reclinado, pierna derecha extendida al frente.
       this.body.rotation.x = -0.95;
-      this.body.position.y = -0.32;
       poseLimb(this.legR, -1.3);
       poseLimb(this.legL, 0.35);
       poseLimb(this.armL, 0.8);
       poseLimb(this.armR, 0.8);
-      return;
-    }
-
-    if (s === ANIM.KICK) {
+      groundSensitive = true;
+    } else if (s === ANIM.KICK) {
       // Patada rápida con la derecha (~0.3 s de swing).
       const t = Math.min(this.actionTimer / 0.3, 1);
       poseLimb(this.legR, -Math.sin(t * Math.PI) * 1.5);
       poseLimb(this.legL, 0.2);
       poseLimb(this.armL, -0.5);
       poseLimb(this.armR, 0.5);
-      return;
-    }
-
-    if (s === ANIM.STUNNED) {
+    } else if (s === ANIM.STUNNED) {
       this.body.rotation.x = 0.25;
       poseLimb(this.armL, 0.6);
       poseLimb(this.armR, 0.6);
       poseLimb(this.legL, 0);
       poseLimb(this.legR, 0);
-      return;
-    }
-
-    if (s === ANIM.DIVE) {
+      groundSensitive = true;
+    } else if (s === ANIM.DIVE) {
       // Clavado lateral del arquero: cuerpo completamente estirado y
       // recto, ambos brazos rectos hacia el cielo. El roll (rotation.z)
       // sigue el lado REAL hacia el que vuela (this._diveSide), no un
@@ -261,64 +260,70 @@ export class SteveCharacter {
       poseLimb(this.legR, 0);
       poseLimb(this.armL, -2.6);
       poseLimb(this.armR, -2.6);
-      return;
-    }
-
-    if (s === ANIM.LOW_DIVE) {
+      groundSensitive = true;
+    } else if (s === ANIM.LOW_DIVE) {
       // Vuelo bajo del arquero: cae de costado y queda horizontal — es un
       // ROLL sobre Z (rotation.z), NO un picado hacia adelante
       // (rotation.x, que es lo que hacía antes y se veía como si se
       // tirara de cabeza al frente en vez de estirarse hacia el costado).
       this.body.rotation.x = 0.1;
       this.body.rotation.z = -1.3 * this._diveSide;
-      this.body.position.y = -0.35;
       poseLimb(this.legL, 0);
       poseLimb(this.legR, 0);
       poseLimb(this.armL, -2.6);
       poseLimb(this.armR, -2.6);
-      return;
-    }
-
-    if (s === ANIM.DIVE_GROUND) {
+      groundSensitive = true;
+    } else if (s === ANIM.DIVE_GROUND) {
       // Arquero recién aterrizado del clavado: tendido de costado hacia el
       // lado real por el que voló, antes de levantarse (en vez de saltar
       // de golpe del vuelo a la pose de pie).
       this.body.rotation.x = 0.1;
       this.body.rotation.z = -1.4 * this._diveSide;
-      this.body.position.y = -0.4;
       poseLimb(this.legL, 0);
       poseLimb(this.legR, 0);
       poseLimb(this.armL, -1.8);
       poseLimb(this.armR, -1.8);
-      return;
-    }
-
-    if (s === ANIM.CATCH) {
+      groundSensitive = true;
+    } else if (s === ANIM.CATCH) {
       // Arquero con el balón atajado en las manos: cuerpo recto, brazos
       // extendidos al frente (pose "zombie").
       poseLimb(this.legL, 0);
       poseLimb(this.legR, 0);
       poseLimb(this.armL, -1.57);
       poseLimb(this.armR, -1.57);
-      return;
-    }
-
-    if (s === ANIM.JUMP) {
+    } else if (s === ANIM.JUMP) {
       poseLimb(this.legL, 0.5);
       poseLimb(this.legR, -0.5);
       poseLimb(this.armL, -2.6);
       poseLimb(this.armR, -2.6);
-      return;
+    } else {
+      // Ciclo de caminata/carrera según velocidad real.
+      const speedNorm = Math.min(horizontalSpeed / 7, 1.15);
+      this.walkPhase += dt * (4 + horizontalSpeed * 1.7);
+      const swing = Math.sin(this.walkPhase) * 0.85 * speedNorm;
+      poseLimb(this.legL, swing);
+      poseLimb(this.legR, -swing);
+      poseLimb(this.armL, -swing * 0.8);
+      poseLimb(this.armR, swing * 0.8);
     }
 
-    // Ciclo de caminata/carrera según velocidad real.
-    const speedNorm = Math.min(horizontalSpeed / 7, 1.15);
-    this.walkPhase += dt * (4 + horizontalSpeed * 1.7);
-    const swing = Math.sin(this.walkPhase) * 0.85 * speedNorm;
-    poseLimb(this.legL, swing);
-    poseLimb(this.legR, -swing);
-    poseLimb(this.armL, -swing * 0.8);
-    poseLimb(this.armR, swing * 0.8);
+    if (groundSensitive) this._clampToGround();
+  }
+
+  /**
+   * Empuja el cuerpo hacia arriba si, con la pose actual (rotación +
+   * huesos posados), alguna parte quedó por debajo del piso (Y mundo < 0).
+   * Usa el bounding box PRECISO (huesos posados, no el bind-pose — con
+   * `setFromObject(obj)` sin el flag `precise` el box de un SkinnedMesh
+   * ignora el posado de huesos y da resultados incorrectos para poses
+   * como la barrida, donde una pierna se extiende bien hacia adelante).
+   */
+  _clampToGround() {
+    this.group.updateMatrixWorld(true);
+    _groundBox.setFromObject(this.body, true);
+    if (_groundBox.min.y < 0) {
+      this.body.position.y -= _groundBox.min.y;
+    }
   }
 
   dispose() {

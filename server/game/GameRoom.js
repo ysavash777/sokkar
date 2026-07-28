@@ -361,9 +361,14 @@ export class GameRoom {
       // cruzar pie / barrida (ver resolve*Challenge) para recibirlo a
       // propósito. EXCEPCIONES, siempre automáticas (sin clic):
       //  - un cuerpo BARRIÉNDOSE es sólido (rebota de frente/costado/arriba).
-      //  - un cuerpo en VUELO BAJO o CLAVADO (arquero) es sólido hacia el
-      //    costado/aire — y si lo TOCA dentro de SU área de meta, en vez de
+      //  - un cuerpo en VUELO BAJO o EN EL AIRE (arquero) es sólido hacia
+      //    el costado/aire — y si lo TOCA CON EL CUERPO (no con el círculo
+      //    de control del piso) dentro de SU área de meta, en vez de
       //    rebotarlo lo ataja con las manos (catchBall), sin apretar nada.
+      //    No se exige `p.anim === ANIM.DIVE` a propósito: ese byte llega
+      //    recién en el próximo sync de estado (20 Hz) y el contacto puede
+      //    ocurrir antes de que el servidor se entere — alcanza con que
+      //    esté en el aire (clavado o un salto común) dentro del área.
       //  - el ARQUERO de pie también es sólido (colisión automática de
       //    cuerpo, sin necesidad de cruzar pie) — pero eso solo bloquea o
       //    rebota, nunca ataja (atajar requiere estar en pleno vuelo).
@@ -376,7 +381,7 @@ export class GameRoom {
           if (hit && this.isInOwnPenaltyArea(p)) this.catchBall(p, now);
         } else if (p.pos.y > PLAYER.AIRBORNE_COLLISION_MIN_Y) {
           const hit = collideBallWithAirborneBody(ball, p);
-          if (hit && p.position === 'GK' && p.anim === ANIM.DIVE && this.isInOwnPenaltyArea(p)) {
+          if (hit && p.position === 'GK' && this.isInOwnPenaltyArea(p)) {
             this.catchBall(p, now);
           }
         } else if (p.position === 'GK') {

@@ -63,7 +63,7 @@ export const PLAYER = {
   // costado (con clic izquierdo). Solo disponible en posición GK.
   DIVE_SIDE_SPEED: 6.5,
   DIVE_HEIGHT_MULT: 0.5, // fracción de la altura de salto normal
-  DIVE_GROUND_MS: 650, // al aterrizar, queda tendido de costado antes de levantarse
+  DIVE_GROUND_MS: 350, // al aterrizar, queda tendido de costado antes de levantarse
   // Umbral de altura para considerar a un jugador "en el aire" a efectos
   // de la colisión automática con el balón (salto, clavado, etc.).
   AIRBORNE_COLLISION_MIN_Y: 0.15,
