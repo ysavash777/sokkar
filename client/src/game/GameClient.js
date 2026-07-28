@@ -526,9 +526,17 @@ export class GameClient {
     this.controlRing.visible = true;
     this.controlRing.position.set(L.pos.x, 0.02, L.pos.z);
 
-    // Esfera de depuración de la asistencia de atajada (solo ?debug=1).
+    // Esfera de depuración de la asistencia de atajada (solo ?debug=1):
+    // solo tiene sentido mostrarla cuando REALMENTE puede intervenir —
+    // vuelo bajo o clavado alto (ver GameRoom.tick, checkDiveCatchSphere
+    // solo se llama ahí) — nunca en una barrida normal ni parado/trotando.
+    // Antes se mostraba siempre que fueras arquero: en una barrida común
+    // el cuerpo queda tendido casi horizontal y se salía visualmente de
+    // la esfera (que sigue centrada a media altura, pose de pie), dando
+    // la falsa impresión de estar desalineada — en realidad esa acción ni
+    // siquiera usa la esfera.
     if (this.debugCatchSphere) {
-      const showSphere = this.myPosition === 'GK';
+      const showSphere = this.myPosition === 'GK' && (lowDiving || L.diving);
       this.debugCatchSphere.visible = showSphere;
       if (showSphere) this.debugCatchSphere.position.set(L.pos.x, L.pos.y + PLAYER.HEIGHT / 2, L.pos.z);
     }
