@@ -307,6 +307,18 @@ export class MobileControls {
   }
 
   _wireButton(btn, def) {
+    // Solo el botón de patear rastrea SU PROPIO dedo mientras está
+    // presionado (ver onMove): en la práctica el jugador ya tiene el
+    // pulgar izquierdo ocupado con el joystick y el derecho con este
+    // botón — no le queda un tercer dedo libre para arrastrar aparte en
+    // el canvas (eso es lo que hacía _bindLookLayer antes, y por eso no
+    // se sentía apuntable mientras se cargaba el remate en la práctica).
+    // Arrastrar el MISMO dedo que sostiene el botón ahora también apunta,
+    // con la sensibilidad "Aim" — cargar y apuntar quedan en un solo toque.
+    let kickTouchId = null;
+    let lastX = 0;
+    let lastY = 0;
+
     const onDown = (e) => {
       if (this.editMode) return;
       // Sprint sin stamina: el botón se apaga solo (ver
@@ -316,21 +328,40 @@ export class MobileControls {
       e.preventDefault();
       e.stopPropagation();
       btn.classList.add('active');
-      if (def.kind === 'kick') this.input.setKickHeld(true);
-      else if (def.kind === 'tap') this.input.trigger(def.id);
+      if (def.kind === 'kick') {
+        this.input.setKickHeld(true);
+        const t = e.changedTouches[0];
+        kickTouchId = t.identifier;
+        lastX = t.clientX;
+        lastY = t.clientY;
+      } else if (def.kind === 'tap') this.input.trigger(def.id);
       else if (def.kind === 'toggle') {
         const next = !btn.classList.contains('toggled');
         btn.classList.toggle('toggled', next);
         this.input.setTouchSprint(next);
       }
     };
+    const onMove = (e) => {
+      if (this.editMode || def.kind !== 'kick' || kickTouchId === null) return;
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        if (t.identifier !== kickTouchId) continue;
+        this.input.addLookDelta((t.clientX - lastX) * this.prefs.sensAim, (t.clientY - lastY) * this.prefs.sensAim);
+        lastX = t.clientX;
+        lastY = t.clientY;
+      }
+    };
     const onUp = (e) => {
       if (this.editMode) return;
       e.preventDefault();
       btn.classList.remove('active');
-      if (def.kind === 'kick') this.input.setKickHeld(false);
+      if (def.kind === 'kick') {
+        this.input.setKickHeld(false);
+        kickTouchId = null;
+      }
     };
     btn.addEventListener('touchstart', onDown, { passive: false });
+    if (def.kind === 'kick') btn.addEventListener('touchmove', onMove, { passive: false });
     btn.addEventListener('touchend', onUp, { passive: false });
     btn.addEventListener('touchcancel', onUp, { passive: false });
   }
@@ -338,9 +369,10 @@ export class MobileControls {
   /**
    * Arrastrar sobre el resto de la pantalla mueve la cámara (equivalente
    * al mouse) — con un dedo INDEPENDIENTE del que sostiene cualquier
-   * botón (identifiers de touch distintos), así que apuntar mientras se
-   * carga el remate funciona igual que soltar la carga en cualquier otro
-   * momento: no hay nada que lo bloquee.
+   * botón (identifiers de touch distintos). Sigue existiendo por si en
+   * algún momento hay un tercer dedo libre, pero el caso normal (joystick
+   * + botón de patear, sin dedo de sobra) lo cubre el propio botón de
+   * patear ahora (ver _wireButton -> onMove).
    */
   _bindLookLayer() {
     let touchId = null;
